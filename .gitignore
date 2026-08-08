@@ -1,0 +1,10 @@
+# local RAG store & caches
+db/
+*.sqlite3
+__pycache__/
+*.pyc
+.venv/
+venv/
+config.yaml          # user's own config (keep the .example in git)
+*.log
+.DS_Store

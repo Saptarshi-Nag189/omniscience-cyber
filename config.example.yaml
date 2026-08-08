@@ -1,0 +1,55 @@
+# omniscience-cyber — configuration (copy to config.yaml and edit)
+# Everything is local/offline. Set YOUR OWN guardrails here.
+
+# ── Models (Ollama tags; build the uncensored ones via modelfiles/) ───────────
+chat_model: qwen-pentest            # default generator for answers
+embedding_model: all-MiniLM-L6-v2   # local sentence-transformers model (offline after 1st cache)
+db_dir: db                          # persistent ChromaDB directory
+cards_dir: cards                    # the distilled security cards
+
+# Automatic fallback: if the primary model errors (not pulled, OOM, Ollama hiccup) or returns
+# empty, the RAG tries these in order until one answers. Put your strongest first.
+model_fallbacks:
+  - gemma-pentest
+  - qwen-pentest-32b
+  - qwen-pentest
+  - qwen2.5-coder:7b
+
+# ── Generation ────────────────────────────────────────────────────────────────
+temperature: 0.1                    # low = fewer hallucinations; extraction paths use 0.0
+top_k: 4                            # cards retrieved per question
+
+# ── Two-model verifier (verify.py) ────────────────────────────────────────────
+# A second model re-checks the first's answer for fabricated CVSS / payload / scope claims.
+verifier_model: null                # null = auto-pick the highest-ranked OTHER pulled model
+# Authority ranking — a LOWER-ranked verifier can only FLAG, never override a stronger model.
+model_rank:
+  gemma-pentest: 6          # top authority (preferred verifier)
+  qwen-pentest-32b: 5
+  qwen-pentest: 3
+  qwen2.5-coder:7b: 3
+
+# ── YOUR GUARDRAILS (the important part) ──────────────────────────────────────
+guardrails:
+  # The assistant NEVER decides scope. List your engagement's authorized hosts here;
+  # the assistant is told to refuse/defer on anything not listed. YOU own this list.
+  in_scope_hosts: []                # e.g. ["staging.example.com", "api.staging.example.com"]
+
+  # Refusal policy for the models. The *-pentest Modelfiles are tuned to NOT refuse
+  # legitimate authorized-pentest asks. Set your own hard limits:
+  forbid:
+    - dos_or_stress_testing         # no load/flood/DoS
+    - bulk_real_pii_exfiltration    # PoCs stay impact-limited (one record)
+    - out_of_scope_targets          # only in_scope_hosts above
+  require:
+    - authorized_engagement         # use only under a signed engagement / bug-bounty scope
+    - impact_limited_poc            # prove impact, then stop
+
+  # Anti-hallucination: when the cards don't cover a question, the model must SAY SO
+  # ("not in my security sources") rather than invent a CVSS vector / payload / scope call.
+  grounding_rules: |
+    Answer for an AUTHORIZED penetration test using ONLY the provided security cards when
+    they cover the question. If they don't, say "This isn't in my security sources —" first,
+    then optionally add clearly-labeled general knowledge. Never fabricate a CVSS vector or
+    score, an exact payload, or an in-scope/out-of-scope decision. For scope, defer to the
+    in_scope_hosts list / the program owner. Cite which card you used.
