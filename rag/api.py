@@ -25,10 +25,12 @@ Run:
 Endpoints:
   GET  /health                         -> {"ok": true, "model": "..."}   (no auth)
   POST /ask     {"q": "...", "verify": false, "model": null}
-        -> {"answer","model","tried","cards"[, "verdict"]}
+        -> {"answer","model","tried","cards","citations"[, "verdict"]}
+  POST /harden  {"q": "<finding / config / asset>"}   (DEFENSIVE: prioritized remediation)
+        -> {"answer","model","tried","cards","citations"}
   POST /tool    {"task": "..."}         -> PLAIN TEXT: runnable Kali command(s), one per line
         (also GET /tool?task=...  — so it's shell-pipe friendly)
-  POST /retrieve {"q": "...", "k": 4}   -> {"cards":[{id,source,text}]}
+  POST /retrieve {"q": "...", "k": 4}   -> {"cards":[{id,source,text,score,distance}]}
 
 Examples (from Kali — the /tool output feeds straight into a shell):
   curl -s localhost:8600/health
@@ -202,13 +204,20 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(200, {"cards": hits})
             if self.path.startswith("/ask"):
                 r = RAG.ask(q, model=data.get("model"))
-                out = {"answer": r["answer"], "model": r["model"],
-                       "tried": r["tried"], "cards": r["cards"]}
+                out = {"answer": r["answer"], "model": r["model"], "tried": r["tried"],
+                       "cards": r["cards"], "citations": r.get("citations")}
                 if data.get("verify"):
                     out["verdict"] = _verify(q, r["context"], r["answer"], r["model"])
                 _audit({"event": "ask", "ip": self.client_address[0], "q": q,
                         "model": r["model"], "verify": bool(data.get("verify"))})
                 return self._send(200, out)
+            if self.path.startswith("/harden"):
+                r = RAG.harden(q, model=data.get("model"))
+                _audit({"event": "harden", "ip": self.client_address[0], "q": q,
+                        "model": r["model"]})
+                return self._send(200, {"answer": r["answer"], "model": r["model"],
+                                        "tried": r["tried"], "cards": r["cards"],
+                                        "citations": r.get("citations")})
             return self._send(404, {"error": "unknown endpoint"})
         except Exception as e:
             return self._send(500, {"error": str(e)})

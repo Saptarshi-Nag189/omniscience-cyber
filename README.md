@@ -98,6 +98,7 @@ python rag/api.py --port 8600 &
 curl -s localhost:8600/health
 curl -s localhost:8600/ask -d '{"q":"how do I test for IDOR and score it?"}'
 curl -s localhost:8600/ask -d '{"q":"CVSS for reflected XSS?","verify":true}'   # +2-model check
+curl -s localhost:8600/harden -d '{"q":"TLS 1.0 + RC4 enabled on the login host"}'  # blue-team fix
 curl -s localhost:8600/retrieve -d '{"q":"jwt none alg","k":3}'
 ```
 
@@ -175,6 +176,21 @@ python rag/scope_guard.py "sqlmap -u https://prod.example.com/x?id=1 --dump-all"
 The in-scope host list is also injected into the command-generator's prompt, so the model
 aims at your authorized targets in the first place — the guard is the backstop, not the plan.
 
+## Hardening advisor — turn a finding into a fix (blue-team mode)
+
+A pentest only improves security once the bugs get **fixed**, so the assistant has a defensive
+counterpart to `ask`/`tool`: give it a finding, a config/code snippet, or an asset and it returns
+**prioritized, grounded remediation** — root cause → concrete fix → interim compensating control →
+how to re-test — citing the relevant card.
+
+```bash
+python rag/rag_core.py harden "login endpoint reflects the 'next' param into a 302 Location"
+curl -s localhost:8600/harden -d '{"q":"S3 bucket returns NoSuchBucket on a live CNAME"}'
+```
+
+It's the same offline model and cards, in defensive mode (`HARDENING_RULES`) — useful for writing the
+remediation section of a report, or for a quick "how do I close this" during testing.
+
 ## Automatic model fallback
 
 If a model errors (not pulled, out-of-memory, Ollama hiccup) or returns empty, the RAG **auto-
@@ -204,14 +220,15 @@ to the most-compliant model).
 
 ## Distilled cards (`cards/`) — the knowledge base
 
-28 compact security **flash-cards**, one concept each, covering the high-yield bug classes and
-methodology: IDOR/BOLA, authz/priv-esc, SQLi, JWT/auth, injection/RCE, SSTI, XXE, insecure
-deserialization, GraphQL, path-traversal/LFI, SSRF, XSS, CORS, OAuth/OIDC/SSO, file-upload,
-race conditions, open redirect, subdomain takeover, verb-tampering, CSRF/clickjacking, business-
-logic/CRUD, PII exposure, Android/iOS, recon & attack-surface mapping, hardened-target methodology,
-and scope/dedupe. Each card is a hand-distilled condensation of authoritative sources
-(OWASP WSTG / API Top 10 / Cheat Sheets, PortSwigger Web Security Academy, CWE, CVSS v3.1) —
-see **[REFERENCES.md](REFERENCES.md)**.
+34 compact security **flash-cards**, one concept each, covering the high-yield bug classes and
+methodology: IDOR/BOLA, authz/priv-esc, SQLi, NoSQLi, JWT/auth, injection/RCE, SSTI, XXE, insecure
+deserialization, GraphQL, path-traversal/LFI, SSRF, XSS, CORS, OAuth/OIDC/SSO, HTTP request
+smuggling, file-upload, race conditions, open redirect, subdomain takeover, verb-tampering,
+CSRF/clickjacking, business-logic/CRUD, PII exposure, Android/iOS, cloud & IAM misconfig, Active
+Directory / internal, network & TLS, recon & attack-surface mapping, hardened-target methodology,
+scope/dedupe, and a defensive hardening/remediation advisor. Each card is a hand-distilled
+condensation of authoritative sources (OWASP WSTG / API Top 10 / Cheat Sheets, PortSwigger Web
+Security Academy, CWE, CVSS v3.1) — see **[REFERENCES.md](REFERENCES.md)**.
 
 **Why distilled, not raw docs:** small focused cards keep retrieval sharp and answers grounded —
 the model gets exactly the relevant concept instead of paragraphs of a 200-page guide. This

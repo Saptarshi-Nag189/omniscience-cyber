@@ -1,0 +1,19 @@
+# Network Service & TLS/SSL Testing and Hardening
+
+*Keywords: TLS, SSL, cipher suite, weak protocol, SSLv3 TLS1.0 TLS1.1, POODLE BEAST, Heartbleed, testssl.sh sslscan, certificate expiry, self-signed, HSTS, forward secrecy, network service exposure, nmap scripts, insecure protocol, telnet ftp smb, service hardening, weak cipher, RC4 3DES.*
+
+## What network/TLS testing covers and the discipline
+
+This covers exposed network services and the security of their transport (TLS/SSL) — the layer beneath the web app. Findings include weak/obsolete TLS (protocols, ciphers, keys), certificate problems, cleartext/legacy services (Telnet, FTP, SMBv1), and unnecessarily exposed management ports. Keep it in-scope and gentle: light service discovery, no aggressive scanning of fragile production, and no exploitation of a service that would disrupt it. The goal is an inventory of transport/service weaknesses plus concrete hardening — this card pairs with the hardening-advisor mode to turn each finding into a fix.
+
+## TLS/SSL assessment — non-intrusive
+
+Assess TLS with read-only scanners: **`testssl.sh`** (`testssl.sh --severity LOW https://<in-scope-host>`) is the most thorough — it reports protocols, ciphers, key sizes, forward secrecy, HSTS, and known flaws; **`sslscan`** / **`sslyze`** are quick alternatives; **`nmap --script ssl-enum-ciphers -p 443 <host>`** enumerates ciphers per protocol. What to flag: **obsolete protocols** enabled (SSLv2/SSLv3, TLS 1.0/1.1 — deprecated), **weak ciphers** (RC4, 3DES, EXPORT, NULL, anon-DH, CBC-only without TLS1.2 AEAD), **no forward secrecy** (no ECDHE), **weak keys** (RSA < 2048, weak DH params / Logjam), **certificate issues** (expired, self-signed on prod, wrong CN/SAN, weak signature like SHA-1), and **missing HSTS**. Named issues to check where still relevant: Heartbleed (`ssl-heartbleed`), POODLE (SSLv3/CBC), ROBOT, Sweet32 (3DES), BEAST. These scanners are safe/non-intrusive by default — Heartbleed's NSE check reads a small memory chunk to prove the bug; that's an acceptable single PoC, not a data-harvest.
+
+## Exposed services & protocol hygiene
+
+Inventory exposed services with a **light** scan (`nmap -sV -T2 --top-ports 1000 <in-scope-host>` — no `-T5`, no broad ranges). Flag **cleartext/legacy protocols** that should be gone: Telnet (23), FTP (21) for credentials, HTTP where HTTPS is expected, SMBv1 (EternalBlue-era), SNMP with default community strings (`public`/`private` — `onesixtyone`, `snmpwalk`), LDAP without TLS, unauthenticated Redis/Elasticsearch/Memcached/MongoDB bound to a public interface, and RDP/SSH/database ports exposed to untrusted networks. For each, the finding is "sensitive/legacy service reachable and/or unencrypted"; prove exposure with a banner grab or version, not by breaking in. Default credentials on a management service (`admin/admin`, SNMP `public`) are a direct finding — verify with a single login attempt, don't brute-force.
+
+## Network/TLS CVSS, and hardening guidance
+
+Weak TLS allowing MITM downgrade / cleartext credential exposure: `CVSS:3.1/AV:N/AC:H/PR:N/UI:N/S:U/C:H/I:H/A:N` ≈ 7.4 (AC:H — usually needs a MITM position); an exposed unauthenticated datastore with sensitive data: up to 9.8. **Hardening** (the fix side, for the advisor): disable SSLv2/SSLv3/TLS1.0/1.1 — allow **TLS 1.2+ (prefer 1.3)** only; restrict to strong AEAD ciphers with ECDHE forward secrecy, drop RC4/3DES/EXPORT/NULL; use RSA ≥ 2048 / ECDSA P-256 keys and SHA-256+ certs from a trusted CA, monitor expiry; enable **HSTS** (with preload once confident) and OCSP stapling; replace cleartext services with encrypted equivalents (SSH not Telnet, SFTP/FTPS not FTP, LDAPS), disable SMBv1, change default SNMP communities or move to SNMPv3; bind datastores to localhost/private nets with auth; and reduce exposed surface — firewall management ports to admin networks and put services behind a VPN/bastion.

@@ -17,7 +17,15 @@ model_fallbacks:
 
 # ── Generation ────────────────────────────────────────────────────────────────
 temperature: 0.1                    # low = fewer hallucinations; extraction paths use 0.0
-top_k: 4                            # cards retrieved per question
+top_k: 4                            # cards returned per question (after re-ranking)
+
+# ── Retrieval (hybrid: embedding similarity + keyword overlap) ─────────────────
+# The retriever over-fetches candidates then re-ranks them, blending vector similarity with
+# a keyword-overlap boost against each card's title + `*Keywords:*` line — so a query that
+# names a technique lands the right card even when the raw embedding is fuzzy.
+retrieve_candidate_mult: 4          # over-fetch this * top_k candidates before re-ranking
+keyword_weight: 0.3                 # 0 = pure embeddings, 1 = pure keyword overlap (0.3 default)
+min_relevance: 0.0                  # drop hits scoring below this (0..1); 0 = keep top_k always
 
 # ── HTTP API security (rag/api.py) ────────────────────────────────────────────
 # The API generates attack commands, so treat it as sensitive.

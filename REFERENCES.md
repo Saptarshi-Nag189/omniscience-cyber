@@ -50,6 +50,12 @@ authoritative sources. Credit to their authors and maintainers.
 | 26 | Open redirect | OWASP Unvalidated Redirects Cheat Sheet, CWE-601 |
 | 27 | Subdomain takeover / dangling DNS | OWASP WSTG-CONFIG, CWE-350 |
 | 28 | Recon & attack-surface mapping | OWASP WSTG-INFO, OSSTMM |
+| 29 | HTTP request smuggling (desync) | PortSwigger, CWE-444 |
+| 30 | NoSQL injection | OWASP WSTG-INPV, CWE-943 |
+| 31 | Cloud & IAM misconfiguration | CIS Benchmarks, cloud provider hardening guides, CWE-732 |
+| 32 | Active Directory / internal | MITRE ATT&CK, impacket/BloodHound docs, CWE-284 |
+| 33 | Network service & TLS/SSL | OWASP WSTG-CRYP, Mozilla TLS guidelines, CWE-326/327 |
+| 34 | Hardening & remediation advisor | OWASP Proactive Controls, CIS Benchmarks |
 
 ## Tooling referenced in the cards
 Standard Kali / community tools: nuclei, ffuf, sqlmap, nmap, nikto, hydra, gobuster, wpscan,

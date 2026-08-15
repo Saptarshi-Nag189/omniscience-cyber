@@ -35,6 +35,40 @@ DEFAULT_EMBED = "all-MiniLM-L6-v2"       # small, fast, fully offline after firs
 DEFAULT_MODEL = "qwen-pentest"           # Ollama model tag (build via modelfiles/)
 DEFAULT_DB = "db"                        # persistent chroma dir
 
+import re as _re
+
+# Words too generic to help keyword matching (they'd match every card).
+_STOP = {
+    "the", "and", "for", "how", "does", "can", "what", "with", "was", "are", "test",
+    "testing", "this", "that", "from", "into", "when", "where", "which", "using", "use",
+    "get", "got", "via", "your", "you", "any", "all", "would", "should", "could", "have",
+    "has", "not", "but", "its", "it's", "a", "an", "of", "to", "in", "on", "is", "do",
+    "security", "vulnerability", "vuln", "attack", "server", "app", "web", "http",
+}
+
+
+def _tokens(text: str) -> set[str]:
+    """Lowercased alphanumeric word tokens (len>=3), minus generic stopwords."""
+    return {w for w in _re.findall(r"[a-z0-9]{3,}", (text or "").lower()) if w not in _STOP}
+
+
+def _keyword_overlap(q_tokens: set[str], card_text: str) -> float:
+    """Fraction of the query's meaningful tokens that appear in the card's title + Keywords
+    line. 0..1. This is the keyword half of hybrid retrieval — it rewards a card that
+    explicitly names the technique the query is about."""
+    if not q_tokens:
+        return 0.0
+    lines = (card_text or "").splitlines()
+    signal = []
+    for ln in lines[:8]:
+        s = ln.strip()
+        if s.startswith("# ") or s.lower().startswith("*keywords"):
+            signal.append(s)
+    card_tokens = _tokens(" ".join(signal)) or _tokens(card_text[:400])
+    if not card_tokens:
+        return 0.0
+    return len(q_tokens & card_tokens) / len(q_tokens)
+
 
 GROUNDING_RULES = (
     "You answer for an AUTHORIZED penetration test using ONLY the provided SECURITY CARDS "
@@ -48,15 +82,47 @@ GROUNDING_RULES = (
 # toolchain, grounded in the cards. Used by the /tool API endpoint and `mode="tool"`.
 # Output must be pipe-friendly (command only, no prose) so wrapper scripts can exec it.
 KALI_TOOL_RULES = (
-    "You are a command generator for an AUTHORIZED penetration test on Kali Linux. Given the "
-    "task, output ONLY the exact runnable command(s) for the appropriate standard Kali tool "
-    "(nuclei, ffuf, sqlmap, nmap, nikto, hydra, gobuster, wpscan, katana, dalfox, jwt_tool, "
-    "hashcat, john, curl, etc.), one per line, NO prose, NO markdown fences, NO explanation. "
-    "Use <TARGET> / <WORDLIST> / <COOKIE> as placeholders where the operator must fill values. "
-    "Always include safety flags that respect rules of engagement: throttling (--rate/--delay), "
-    "scope-limiting, and stop-at-proof (e.g. sqlmap --current-user not --dump; no DoS). If the "
-    "task is not a tool-runnable action, output a single line: '# not a tool task: <reason>'. "
-    "Never invent flags that don't exist for the tool."
+    "You are a command generator for an AUTHORIZED penetration test on Kali Linux. Output ONLY "
+    "exact, RUNNABLE command(s) for the right standard tool — one command per line, NO prose, "
+    "NO markdown fences, NO numbering, NO explanation. Every line must be something a shell can "
+    "execute as-is (or a leading '# comment'). Tools you may use (pick the best fit for the task):\n"
+    "  recon/discovery: nmap, masscan, subfinder, amass, httpx, whatweb, gobuster, ffuf, "
+    "feroxbuster, dirsearch, katana, gau, waybackurls\n"
+    "  web vuln: nuclei, nikto, sqlmap, dalfox, wpscan, commix, tplmap, XSStrike\n"
+    "  api/graphql: curl, graphql-cop, clairvoyance\n"
+    "  auth/crypto: jwt_tool, hashcat, john, hydra (throttled), medusa (throttled)\n"
+    "  tls/network: testssl.sh, sslscan, sslyze, nmap --script ssl-enum-ciphers\n"
+    "  cloud: aws, gsutil, az, ScoutSuite, prowler\n"
+    "  AD/internal: netexec (nxc), crackmapexec, impacket-* (GetUserSPNs.py, secretsdump.py, "
+    "GetNPUsers.py), bloodhound-python, responder, certipy\n"
+    "  smb/enum: enum4linux-ng, smbclient, snmpwalk, onesixtyone\n"
+    "Rules:\n"
+    "- Use <TARGET> / <WORDLIST> / <COOKIE> / <USER> / <HASH> placeholders where the operator fills values.\n"
+    "- Use REAL flags only — never invent a flag. If unsure of exact syntax, emit the closest correct "
+    "form and add a trailing '# verify flag' comment on that line.\n"
+    "- Bake in rules-of-engagement safety: throttle (nmap -T2 not -T5; ffuf/nuclei -rate/-rl; "
+    "hydra -t 4; --delay), scope-limit to the given host, and stop-at-proof (sqlmap --current-user/--dbs "
+    "not --dump-all; nuclei templated checks; no --flood, no DoS, no bulk exfiltration).\n"
+    "- Prefer one precise command over a noisy sweep. If the task is not a tool-runnable action, "
+    "output exactly one line: '# not a tool task: <reason>'."
+)
+
+# Hardening-advisor mode (DEFENSIVE): given a finding, a config/code snippet, or an asset, produce
+# concrete, prioritized remediation grounded in the cards. This is the blue-team counterpart to the
+# offensive modes — a pentest only improves security once the bugs get fixed. Used by RagCore.harden()
+# and the /harden API endpoint.
+HARDENING_RULES = (
+    "You are a defensive security engineer advising how to HARDEN a system found during an authorized "
+    "assessment. Given a finding, a piece of configuration/code, or an asset description, produce "
+    "actionable remediation. For each issue give: (1) ROOT CAUSE (the class of weakness, not just the "
+    "symptom), (2) the concrete FIX — real config/code/setting, not 'sanitize input', specific to the "
+    "stack when known, (3) any interim COMPENSATING CONTROL if the real fix takes time (WAF rule, network "
+    "restriction — clearly labeled as temporary), and (4) how to VERIFY the fix (a re-test step). "
+    "Rank recommendations by risk (exploitability x impact): critical/quick wins first, then structural "
+    "fixes, then defense-in-depth. Prefer root-cause fixes over symptom patches; add detection/monitoring "
+    "guidance where useful; reference a recognized baseline (CIS Benchmark, OWASP, vendor hardening guide) "
+    "when relevant. Ground your advice in the provided SECURITY CARDS and cite which card. Do NOT fabricate "
+    "CVEs, settings, or CVSS scores — if a detail depends on the exact version/stack, say so."
 )
 
 
@@ -73,6 +139,11 @@ class RagCore:
         self.db_dir = str(Path(cfg.get("db_dir", DEFAULT_DB)).resolve())
         self.temperature = float(cfg.get("temperature", 0.1))
         self.top_k = int(cfg.get("top_k", 4))
+        # Hybrid-retrieval tuning (see retrieve()): over-fetch cand_mult*k candidates, blend
+        # embedding similarity with keyword overlap (kw_weight), optional score threshold.
+        self.cand_mult = int(cfg.get("retrieve_candidate_mult", 4))
+        self.kw_weight = float(cfg.get("keyword_weight", 0.3))
+        self.min_relevance = float(cfg.get("min_relevance", 0.0))
         self.grounding = cfg.get("grounding_rules", GROUNDING_RULES)
         # Rules-of-Engagement guard: enforce in_scope_hosts / forbid on generated
         # Kali commands so an out-of-scope or DoS command is never handed to a shell.
@@ -123,17 +194,50 @@ class RagCore:
         return len(docs)
 
     def retrieve(self, query: str, k: int | None = None) -> list[dict]:
+        """Hybrid retrieval: pull a wider candidate set by embedding similarity, then re-rank
+        with a keyword-overlap boost (the cards' `*Keywords:*` line + title) so a query that
+        names a technique lands the right card even when the embedding is fuzzy. Each hit gets
+        a `score` (0..1) and `distance`; results are de-duplicated and optionally thresholded."""
+        k = k or self.top_k
         coll = self._collection()
         emb = self._embedder().encode([query]).tolist()
-        res = coll.query(query_embeddings=emb, n_results=k or self.top_k)
-        out = []
-        for i in range(len(res["ids"][0])):
-            out.append({
-                "id": res["ids"][0][i],
-                "source": res["metadatas"][0][i].get("source", ""),
-                "text": res["documents"][0][i],
+        # over-fetch, then re-rank locally
+        n_cand = max(k * self.cand_mult, k + 6)
+        res = coll.query(query_embeddings=emb, n_results=n_cand,
+                         include=["documents", "metadatas", "distances"])
+        ids = res.get("ids", [[]])[0]
+        docs = res.get("documents", [[]])[0]
+        metas = res.get("metadatas", [[]])[0]
+        dists = (res.get("distances") or [[None] * len(ids)])[0]
+
+        # normalize distances within the candidate set -> embedding similarity in 0..1
+        valid = [d for d in dists if isinstance(d, (int, float))]
+        dmin, dmax = (min(valid), max(valid)) if valid else (0.0, 1.0)
+        span = (dmax - dmin) or 1.0
+        q_tokens = _tokens(query)
+
+        cand = []
+        seen = set()
+        for i, cid in enumerate(ids):
+            if cid in seen:
+                continue
+            seen.add(cid)
+            d = dists[i] if i < len(dists) and isinstance(dists[i], (int, float)) else dmax
+            emb_sim = 1.0 - (d - dmin) / span            # 1.0 = closest candidate
+            kw_sim = _keyword_overlap(q_tokens, docs[i])  # 0..1 overlap with card keywords/title
+            score = (1.0 - self.kw_weight) * emb_sim + self.kw_weight * kw_sim
+            cand.append({
+                "id": cid,
+                "source": (metas[i] or {}).get("source", ""),
+                "text": docs[i],
+                "distance": d,
+                "score": round(score, 4),
             })
-        return out
+        cand.sort(key=lambda c: c["score"], reverse=True)
+        if self.min_relevance > 0:
+            kept = [c for c in cand if c["score"] >= self.min_relevance]
+            cand = kept or cand[:1]   # never return nothing if we had candidates
+        return cand[:k]
 
     # ── generation (local Ollama) with automatic model fallback ───────────
     def _model_chain(self, preferred: str | None) -> list[str]:
@@ -151,9 +255,28 @@ class RagCore:
             f"{self.grounding}\n\nSECURITY CARDS:\n{context}\n\n"
             f"QUESTION: {question}\n\nAnswer (grounded, cite the card):"
         )
-        answer, used, tried = self._generate(prompt)
+        answer, used, tried = self._generate(prompt, preferred=model)
         return {"answer": answer, "model": used, "tried": tried,
-                "cards": [c["source"] for c in cards], "context": context}
+                "cards": [c["source"] for c in cards],
+                "citations": [{"source": c["source"], "score": c.get("score")} for c in cards],
+                "context": context}
+
+    def harden(self, subject: str, model: str | None = None) -> dict:
+        """Hardening-advisor mode (DEFENSIVE): given a finding, a config/code snippet, or an
+        asset, return prioritized, grounded remediation. The blue-team counterpart to ask()/tool()
+        — a pentest only improves security once the findings are fixed."""
+        cards = self.retrieve(subject)
+        context = "\n\n".join(f"### CARD: {c['source']}\n{c['text']}" for c in cards)
+        prompt = (
+            f"{HARDENING_RULES}\n\nSECURITY CARDS:\n{context}\n\n"
+            f"FINDING / CONFIG / ASSET TO HARDEN:\n{subject}\n\n"
+            f"Prioritized hardening (root cause → fix → interim control → verify; cite the card):"
+        )
+        answer, used, tried = self._generate(prompt, preferred=model)
+        return {"answer": answer, "model": used, "tried": tried,
+                "cards": [c["source"] for c in cards],
+                "citations": [{"source": c["source"], "score": c.get("score")} for c in cards],
+                "context": context}
 
     def tool(self, task: str, model: str | None = None) -> dict:
         """Kali-tool mode: return ONLY runnable command(s) for the task, feedable to a shell.
@@ -188,9 +311,26 @@ class RagCore:
         return (f"\nIN-SCOPE HOSTS (target ONLY these; use <TARGET> if unsure): {hosts}. "
                 f"Never target a host not on this list.")
 
-    @staticmethod
-    def _sanitize_commands(text: str) -> list[str]:
-        """Strip markdown fences/prose; keep command lines and #comments. Feedable to a shell."""
+    # Standard tools the generator is allowed to emit — a line starting with one of these
+    # (after stripping list markers/`$`) is treated as a real command even if it has no flags.
+    _KNOWN_TOOLS = frozenset({
+        "nmap", "masscan", "subfinder", "amass", "httpx", "whatweb", "gobuster", "ffuf",
+        "feroxbuster", "dirsearch", "katana", "gau", "waybackurls", "nuclei", "nikto",
+        "sqlmap", "dalfox", "wpscan", "commix", "tplmap", "xsstrike", "curl", "wget",
+        "graphql-cop", "clairvoyance", "jwt_tool", "hashcat", "john", "hydra", "medusa",
+        "testssl.sh", "sslscan", "sslyze", "aws", "gsutil", "az", "scoutsuite", "prowler",
+        "netexec", "nxc", "crackmapexec", "bloodhound-python", "responder", "certipy",
+        "enum4linux-ng", "enum4linux", "smbclient", "snmpwalk", "onesixtyone", "getuserspns.py",
+        "secretsdump.py", "getnpusers.py", "psexec.py", "wmiexec.py", "python", "python3",
+        "bash", "sh", "openssl", "dig", "host", "nslookup", "ncat", "nc",
+    })
+
+    @classmethod
+    def _sanitize_commands(cls, text: str) -> list[str]:
+        """Turn a model's response into shell-runnable lines. Strips markdown fences, list
+        markers, and prose so the output can be piped; keeps `# comments` (incl. `# BLOCKED`/
+        `# not a tool task`). Errs toward dropping a non-runnable prose line rather than
+        emitting it — the point of /tool is output a shell can execute as-is."""
         import re
         text = re.sub(r"```[a-zA-Z]*", "", text or "")
         out = []
@@ -198,10 +338,26 @@ class RagCore:
             s = ln.strip()
             if not s:
                 continue
-            # drop obvious prose lines (end with a period and have no shell-ish tokens)
-            if s.endswith(".") and not any(t in s for t in ("--", "/", "-", "|", "$", "http")):
+            # strip leading list markers: "1. ", "1) ", "- ", "* ", "> "
+            s = re.sub(r"^(?:\d+[.)]\s+|[-*>]\s+)", "", s)
+            # normalize a leading shell prompt "$ " / "# " (but keep real comments)
+            if s.startswith("$ "):
+                s = s[2:].strip()
+            if s.startswith("#"):
+                out.append(s)                     # keep comments (guard notes, "not a tool task")
                 continue
-            out.append(s)
+            first = s.split()[0].lower().strip("`") if s.split() else ""
+            looks_like_cmd = (
+                first in cls._KNOWN_TOOLS
+                or first.endswith(".py") or first.endswith(".sh")
+                or any(t in s for t in ("--", " -", "://", "|", "$(", "`"))
+            )
+            # a natural-language sentence: has spaces, ends with a period, no shell tokens
+            is_prose = (s.endswith((".", ":")) and " " in s
+                        and not any(t in s for t in ("--", "/", "://", "|", "$", "`", "=")))
+            if is_prose or not looks_like_cmd:
+                continue
+            out.append(s.strip("`"))
         return out
 
     def _generate(self, prompt: str, preferred: str | None = None):
@@ -232,19 +388,34 @@ class RagCore:
             return False, str(e)
 
 
+def _cite_line(r: dict) -> str:
+    cites = r.get("citations")
+    if cites and any(c.get("score") is not None for c in cites):
+        return "  ".join(f"{c['source']}({c['score']})" for c in cites)
+    return ", ".join(r.get("cards", []))
+
+
 if __name__ == "__main__":
     import sys
     if len(sys.argv) >= 3 and sys.argv[1] == "ingest":
         RagCore().ingest(sys.argv[2])
-    elif len(sys.argv) >= 3 and sys.argv[1] == "ask":
-        r = RagCore().ask(" ".join(sys.argv[2:]))
+    elif len(sys.argv) >= 3 and sys.argv[1] in ("ask", "harden"):
+        rag = RagCore()
+        r = (rag.harden if sys.argv[1] == "harden" else rag.ask)(" ".join(sys.argv[2:]))
         print(r["answer"])
-        print(f"\n[model] {r['model']}   [cards] {', '.join(r['cards'])}")
+        print(f"\n[model] {r['model']}   [cards] {_cite_line(r)}")
         if len(r.get("tried", [])) > 1:
             print(f"[fallback] tried: {' -> '.join(r['tried'])}")
+    elif len(sys.argv) >= 3 and sys.argv[1] == "tool":
+        r = RagCore().tool(" ".join(sys.argv[2:]))
+        print("\n".join(r["commands"]) or "# (no command produced)")
+        if r.get("blocked"):
+            print(f"\n[scope_guard] {len(r['blocked'])} command(s) blocked/flagged", file=sys.stderr)
     else:
         print(textwrap.dedent("""\
             usage:
               python rag_core.py ingest <cards_dir>
-              python rag_core.py ask "how do I test for IDOR?"
+              python rag_core.py ask    "how do I test for IDOR?"
+              python rag_core.py tool   "directory brute force with ffuf"
+              python rag_core.py harden "TLS 1.0 enabled, RC4 ciphers on the login host"
         """))

@@ -1,0 +1,19 @@
+# HTTP Request Smuggling (Desync)
+
+*Keywords: request smuggling, HTTP desync, CL.TE, TE.CL, TE.TE, Content-Length Transfer-Encoding, front-end back-end, chunked, HTTP/2 downgrade, H2.CL, H2.TE, CRLF, connection poisoning, cache poisoning via smuggling, smuggle prefix, Burp HTTP Request Smuggler.*
+
+## What request smuggling is and where it lives
+
+Request smuggling exploits a disagreement between two servers in a chain (a front-end proxy/CDN/load-balancer and a back-end) about where one HTTP request ends and the next begins. By crafting ambiguous length headers, an attacker "smuggles" a partial request that the back-end prepends to the *next* user's request — enabling request hijacking, credential/session capture, bypass of front-end access controls, and web-cache poisoning. It only exists where requests from different users share a back-end connection (keep-alive reuse), so any multi-tier deployment (CDN + origin, reverse proxy + app) is a candidate. It's high-impact and affects the *infrastructure*, so treat it carefully.
+
+## Desync detection — timing-based, non-destructive first
+
+The safe way to detect is the **timing technique** (PortSwigger's method) — it doesn't poison other users. Send a request whose ambiguous framing makes the back-end wait for bytes that never arrive; a delayed response indicates the back-end read the smuggled length. Classic variants: **CL.TE** — front-end uses `Content-Length`, back-end uses `Transfer-Encoding: chunked`; **TE.CL** — the reverse; **TE.TE** — both support TE but one can be tricked by an obfuscated header (`Transfer-Encoding: xchunked`, `Transfer-Encoding:\tchunked`, duplicate TE). **HTTP/2 desync** (H2.CL, H2.TE) arises when a front-end downgrades H2 to H1 and trusts an H2 request's injected length/`:path`. Use **Burp's HTTP Request Smuggler** extension for the timing probes — it's built to detect without sending a harmful smuggled prefix. Confirm with a reproducible time delay, then stop; do **not** run a live socket-poisoning payload that would corrupt real users' requests on a production system unless your rules of engagement explicitly authorize it and you target only a test path.
+
+## Desync exploitation & impact (authorized, controlled)
+
+Once a desync is confirmed, impact is proven by capturing **your own** next request or showing a front-end control bypass on an in-scope test endpoint — e.g. smuggle a prefix that makes the back-end route to an admin path the front-end blocks, or capture the tail of a request you send from a second connection you control. For web-cache poisoning via smuggling, target a benign cache key you own. Keep the demonstration to yourself/test accounts — the whole risk of this bug is collateral impact on other users, so a responsible PoC isolates that (single delayed response, self-captured request, or an in-scope test path) rather than actually hijacking live sessions. Document the exact byte-level request(s) so the fix can be verified.
+
+## Request-smuggling CVSS and remediation
+
+Confirmed desync enabling session hijack / auth-control bypass on the shared front-end: `CVSS:3.1/AV:N/AC:H/PR:N/UI:N/S:C/C:H/I:H/A:N` ≈ 8–9 (scope change; AC:H for framing precision) — argue Critical if it yields mass session capture or admin RCE. Root cause: front-end and back-end parse message length inconsistently (both `Content-Length` and `Transfer-Encoding` present, or H2→H1 downgrade trusts client-supplied length). Remediation: make the whole chain speak **HTTP/2 end-to-end** (don't downgrade), or normalize/reject ambiguous requests at the front-end — reject messages that contain both CL and TE, reject malformed/duplicate `Transfer-Encoding`, and disable connection reuse to the back-end if normalization can't be guaranteed; keep proxies/CDNs patched (desync bugs are frequently fixed in proxy software).
