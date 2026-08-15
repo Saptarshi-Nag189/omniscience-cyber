@@ -32,6 +32,13 @@ model_fallbacks:
 temperature: 0.1                    # low = fewer hallucinations; extraction paths use 0.0
 top_k: 4                            # cards returned per question (after re-ranking)
 
+# Speed vs accuracy for "thinking" models (qwen3.x, muse, nemotron, gemma4):
+#   true  = always reason first (most accurate, slower)
+#   false = never reason (fastest)
+#   null  = model default for ask/harden (reason), always off for /tool (clean commands)
+# Override per request: CLI --think/--no-think, or "think": true/false in the API body.
+think: null
+
 # ── Retrieval (hybrid: embedding similarity + keyword overlap) ─────────────────
 # The retriever over-fetches candidates then re-ranks them, blending vector similarity with
 # a keyword-overlap boost against each card's title + `*Keywords:*` line — so a query that

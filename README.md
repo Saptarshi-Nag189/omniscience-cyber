@@ -218,25 +218,67 @@ config, so a single model failing never breaks your workflow. And `scripts/ask.s
 layer: if a model hedges on a legitimate request, it re-frames the ask and routes to a more
 compliant model.
 
-### Picking the right build for your hardware
+### Which one should I build?
 
-Each `FROM` line uses the model's **default build** (a ~Q4 quant — e.g. `qwen3.8` is ~18GB with a
-256K context window). To match your hardware, change that one `FROM` line in the modelfile:
+Build only what your hardware runs well — you don't need all of them.
 
-- **Smaller / faster (low VRAM):** keep the default Q4, e.g. `FROM qwen3.8:27b-q4_K_M`.
-- **Higher quality (more VRAM):** a bigger quant, e.g. `FROM qwen3.8:27b-q8_0` (~30GB) or
-  `:27b-bf16` (~56GB).
-- **Apple Silicon:** use the **`-mlx`** builds (Metal-optimized for unified memory), e.g.
-  `FROM qwen3.8:27b-mlx` or `FROM muse-glimmer:30b-mlx`. (`-nvfp4` builds are the smallest on
-  NVIDIA — e.g. `muse-glimmer:30b-nvfp4` is ~17GB.)
-- **Long context:** these models support large windows (muse-glimmer 128K, qwen3.8 256K), but
-  `num_ctx` is set conservatively (16K–32K) to save memory — raise the `PARAMETER num_ctx` line if
-  you have the headroom.
+- **16GB GPU (NVIDIA):** `codestral-pentest` is the default (fits comfortably). Add
+  `gemma4-pentest` (fast/light) and, if you accept some CPU offload, `qwen3.8-pentest` or
+  `nemotron-pentest` for higher-end answers.
+- **24GB+ GPU:** `muse-pentest`, `qwen3.8-pentest`, and `qwen3-pentest-30b` all run comfortably —
+  make one of them your `chat_model`.
+- **Laptop / ≤12GB:** `gemma4-pentest` (~7.6GB) or `qwen-pentest` (7B).
+- **Apple Silicon:** use the `-mlx` builds (table below); with 32GB+ unified memory the 30B MoE
+  models (`nemotron`, `qwen3.6-35b`) are excellent and fast.
 
-Run `ollama show <tag>` to see a build's exact size, context, and quant before you commit to it.
+### Apple Silicon (MLX) equivalents
 
-These are "thinking" models: on `/ask` and `/harden` they reason internally and you get the clean
-answer; on `/tool` the reasoning is suppressed and stripped so the output stays pipe-clean.
+MLX builds are optimized for Apple's Metal / unified memory. Swap the one `FROM` line in the
+modelfile to the MLX tag:
+
+| Wrapper | Default `FROM` | Apple Silicon `FROM` | MLX size |
+|---|---|---|---|
+| `muse-pentest` | `muse-glimmer` | `muse-glimmer:30b-mlx` | ~21GB |
+| `qwen3.8-pentest` | `qwen3.8` | `qwen3.8:27b-mlx` | ~18GB |
+| `qwen3.6-pentest` | `qwen3.6:35b` | `qwen3.6:35b-mlx` | ~22GB |
+| `nemotron-pentest` | `nemotron-3.5-lightning` | `nemotron-3.5-lightning:30b-a3b-mlx` | ~23GB |
+| `gemma4-pentest` | `gemma4:12b` | `gemma4:12b-mlx` | ~7.7GB |
+| `qwen3-pentest-30b` · `codestral` · `mistral` | — | check `ollama show`/the library for an `-mlx` tag | — |
+
+Run `ollama show <tag>` to confirm a build's exact size, context, and quant before committing.
+
+### Reducing VRAM
+
+Three low-risk levers, smallest-effort first:
+
+1. **Lean context (already set).** The modelfiles ship a small `num_ctx` (8K–16K) because this RAG
+   only needs a few thousand tokens — the KV cache is the biggest VRAM cost on these long-context
+   models. Raise `PARAMETER num_ctx` only if you need it.
+2. **KV-cache quantization + flash attention.** Start Ollama with
+   `scripts/ollama_serve_lowvram.sh` (sets `OLLAMA_FLASH_ATTENTION=1` and
+   `OLLAMA_KV_CACHE_TYPE=q8_0`) — roughly halves KV-cache memory with negligible quality loss
+   (`KV=q4_0` for even less).
+3. **Smaller quant tags.** Swap `FROM` to a QAT or FP4 build — e.g. `gemma4:12b-it-qat` or
+   `muse-glimmer:30b-nvfp4` (~17GB) — smaller than the default Q4 with minimal quality loss.
+
+(Note: MoE models like `nemotron` and `qwen3.6-35b-a3b` reduce *compute*, not VRAM — all their
+weights still load. They're the way to go for **speed**, not footprint.)
+
+### Speed vs accuracy (thinking)
+
+The new models are "thinking" models — they can reason before answering, which **improves accuracy**
+but is slower. You choose:
+
+- **`/ask` and `/harden`** think by default (accuracy). **`/tool`** never thinks (its output must be
+  clean, pipeable commands, and any trace is stripped).
+- Override globally with `think: true` (always reason) or `think: false` (fastest) in `config.yaml`.
+- Override per request: CLI `--think` / `--no-think`, or `"think": true`/`false` in the API body.
+
+```bash
+python rag/rag_core.py ask "CVSS for an authenticated IDOR?" --think      # max accuracy
+python rag/rag_core.py ask "quick: what is BOLA?" --no-think               # max speed
+curl -s localhost:8600/ask -d '{"q":"CVSS for reflected XSS?","think":true}'
+```
 
 ## The knowledge — security cards (`cards/`)
 

@@ -170,6 +170,11 @@ class RagCore:
         self.kw_weight = float(cfg.get("keyword_weight", 0.3))
         self.min_relevance = float(cfg.get("min_relevance", 0.0))
         self.grounding = cfg.get("grounding_rules", GROUNDING_RULES)
+        # Speed vs accuracy: thinking models reason before answering (more accurate, slower).
+        #   think: true  → force thinking on everywhere (max accuracy)
+        #   think: false → force thinking off (max speed)
+        #   think: null/absent → model default for ask/harden, always off for /tool (clean commands)
+        self.think_default = cfg.get("think")   # True | False | None
         # Rules-of-Engagement guard: enforce in_scope_hosts / forbid on generated
         # Kali commands so an out-of-scope or DoS command is never handed to a shell.
         try:
@@ -273,20 +278,25 @@ class RagCore:
                 chain.append(m)
         return chain
 
-    def ask(self, question: str, model: str | None = None) -> dict:
+    def _resolve_think(self, think: bool | None) -> bool | None:
+        """Per-call `think` wins; else the config default; else None (model default)."""
+        return self.think_default if think is None else think
+
+    def ask(self, question: str, model: str | None = None, think: bool | None = None) -> dict:
         cards = self.retrieve(question)
         context = "\n\n".join(f"### CARD: {c['source']}\n{c['text']}" for c in cards)
         prompt = (
             f"{self.grounding}\n\nSECURITY CARDS:\n{context}\n\n"
             f"QUESTION: {question}\n\nAnswer (grounded, cite the card):"
         )
-        answer, used, tried = self._generate(prompt, preferred=model)
+        answer, used, tried = self._generate(prompt, preferred=model,
+                                             think=self._resolve_think(think))
         return {"answer": answer, "model": used, "tried": tried,
                 "cards": [c["source"] for c in cards],
                 "citations": [{"source": c["source"], "score": c.get("score")} for c in cards],
                 "context": context}
 
-    def harden(self, subject: str, model: str | None = None) -> dict:
+    def harden(self, subject: str, model: str | None = None, think: bool | None = None) -> dict:
         """Hardening-advisor mode (DEFENSIVE): given a finding, a config/code snippet, or an
         asset, return prioritized, grounded remediation. The blue-team counterpart to ask()/tool()
         — a pentest only improves security once the findings are fixed."""
@@ -297,18 +307,21 @@ class RagCore:
             f"FINDING / CONFIG / ASSET TO HARDEN:\n{subject}\n\n"
             f"Prioritized hardening (root cause → fix → interim control → verify; cite the card):"
         )
-        answer, used, tried = self._generate(prompt, preferred=model)
+        answer, used, tried = self._generate(prompt, preferred=model,
+                                             think=self._resolve_think(think))
         return {"answer": answer, "model": used, "tried": tried,
                 "cards": [c["source"] for c in cards],
                 "citations": [{"source": c["source"], "score": c.get("score")} for c in cards],
                 "context": context}
 
-    def tool(self, task: str, model: str | None = None) -> dict:
+    def tool(self, task: str, model: str | None = None, think: bool | None = None) -> dict:
         """Kali-tool mode: return ONLY runnable command(s) for the task, feedable to a shell.
         Output is sanitized to command lines (prose/fences stripped) so it can be piped.
         Every generated command is passed through the Rules-of-Engagement scope_guard:
         out-of-scope or DoS/bulk-exfil commands are BLOCKED (replaced by an explanatory
-        comment) so nothing that violates the engagement's RoE reaches a shell."""
+        comment) so nothing that violates the engagement's RoE reaches a shell.
+        Thinking defaults OFF here (output must be clean commands, and any trace is stripped);
+        pass think=True only if you deliberately want the model to reason first."""
         cards = self.retrieve(task)
         context = "\n\n".join(f"### CARD: {c['source']}\n{c['text']}" for c in cards)
         scope_note = self._scope_prompt_note()
@@ -316,8 +329,10 @@ class RagCore:
             f"{KALI_TOOL_RULES}{scope_note}\n\nRELEVANT SECURITY CARDS:\n{context}\n\n"
             f"TASK: {task}\n\nCommand(s):"
         )
-        # think=False: on the /tool path we want commands only, not a thinking model's reasoning.
-        raw, used, tried = self._generate(prompt, preferred=model, think=False)
+        # /tool defaults to think OFF (commands only); an explicit think=True is honored but the
+        # reasoning is stripped from the output either way.
+        raw, used, tried = self._generate(prompt, preferred=model,
+                                          think=False if think is None else think)
         commands = self._sanitize_commands(raw)
         blocked = []
         if self.guard is not None:
@@ -436,17 +451,25 @@ def _cite_line(r: dict) -> str:
 
 if __name__ == "__main__":
     import sys
-    if len(sys.argv) >= 3 and sys.argv[1] == "ingest":
-        RagCore().ingest(sys.argv[2])
-    elif len(sys.argv) >= 3 and sys.argv[1] in ("ask", "harden"):
+    argv = sys.argv[1:]
+    # optional speed/accuracy flags: --think (accuracy) / --no-think (speed)
+    think = None
+    if "--think" in argv:
+        think = True; argv.remove("--think")
+    if "--no-think" in argv:
+        think = False; argv.remove("--no-think")
+    if len(argv) >= 2 and argv[0] == "ingest":
+        RagCore().ingest(argv[1])
+    elif len(argv) >= 2 and argv[0] in ("ask", "harden"):
         rag = RagCore()
-        r = (rag.harden if sys.argv[1] == "harden" else rag.ask)(" ".join(sys.argv[2:]))
+        fn = rag.harden if argv[0] == "harden" else rag.ask
+        r = fn(" ".join(argv[1:]), think=think)
         print(r["answer"])
         print(f"\n[model] {r['model']}   [cards] {_cite_line(r)}")
         if len(r.get("tried", [])) > 1:
             print(f"[fallback] tried: {' -> '.join(r['tried'])}")
-    elif len(sys.argv) >= 3 and sys.argv[1] == "tool":
-        r = RagCore().tool(" ".join(sys.argv[2:]))
+    elif len(argv) >= 2 and argv[0] == "tool":
+        r = RagCore().tool(" ".join(argv[1:]), think=think)
         print("\n".join(r["commands"]) or "# (no command produced)")
         if r.get("blocked"):
             print(f"\n[scope_guard] {len(r['blocked'])} command(s) blocked/flagged", file=sys.stderr)
@@ -454,7 +477,8 @@ if __name__ == "__main__":
         print(textwrap.dedent("""\
             usage:
               python rag_core.py ingest <cards_dir>
-              python rag_core.py ask    "how do I test for IDOR?"
+              python rag_core.py ask    "how do I test for IDOR?"   [--think | --no-think]
               python rag_core.py tool   "directory brute force with ffuf"
               python rag_core.py harden "TLS 1.0 enabled, RC4 ciphers on the login host"
+              # --think = max accuracy (slower), --no-think = max speed
         """))

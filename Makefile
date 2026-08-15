@@ -1,5 +1,5 @@
 # omniscience-cyber — convenience targets. No sudo, all local/offline.
-.PHONY: setup models ingest serve test test-guard ask
+.PHONY: setup models ingest serve serve-ollama test test-guard ask
 
 setup:            ## full setup: models + deps + ingest
 	bash scripts/gpu_setup.sh
@@ -23,6 +23,9 @@ ingest:           ## (re)build the local vector DB from cards/
 
 serve:            ## start the HTTP API for Kali/other tools (localhost:8600)
 	python rag/api.py --host 127.0.0.1 --port 8600
+
+serve-ollama:     ## start Ollama in low-VRAM mode (flash attn + q8_0 KV cache)
+	bash scripts/ollama_serve_lowvram.sh
 
 test:             ## prove the models don't refuse / don't fabricate
 	bash scripts/test_llms.sh
