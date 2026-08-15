@@ -4,8 +4,17 @@
 setup:            ## full setup: models + deps + ingest
 	bash scripts/gpu_setup.sh
 
-models:           ## build the uncensored *-pentest Ollama models
+models:           ## build the uncensored *-pentest Ollama models (skips any whose base isn't pulled)
 	ollama create qwen-pentest -f modelfiles/qwen-pentest.Modelfile
+	-ollama create gemma4-pentest -f modelfiles/gemma4-pentest.Modelfile
+	-ollama create codestral-pentest -f modelfiles/codestral-pentest.Modelfile
+	-ollama create qwen-pentest-14b -f modelfiles/qwen-pentest-14b.Modelfile
+	-ollama create mistral-pentest -f modelfiles/mistral-pentest.Modelfile
+	-ollama create qwen3.8-pentest -f modelfiles/qwen3.8-pentest.Modelfile
+	-ollama create qwen3-pentest-30b -f modelfiles/qwen3-pentest-30b.Modelfile
+	-ollama create qwen3.6-pentest -f modelfiles/qwen3.6-pentest.Modelfile
+	-ollama create muse-pentest -f modelfiles/muse-pentest.Modelfile
+	-ollama create nemotron-pentest -f modelfiles/nemotron-pentest.Modelfile
 	-ollama create qwen-pentest-32b -f modelfiles/qwen-pentest-32b.Modelfile
 	-ollama create gemma-pentest -f modelfiles/gemma-pentest.Modelfile
 

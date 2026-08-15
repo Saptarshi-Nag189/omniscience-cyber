@@ -189,17 +189,33 @@ python rag/scope_guard.py "sqlmap -u https://prod.example.com/x?id=1 --dump-all"
 
 ## The AI models (`modelfiles/`)
 
-| Model | Runs on | Best for |
-|---|---|---|
-| `qwen-pentest` | CPU / laptop | Fast, reliable payload and exploit generation |
-| `qwen-pentest-32b` | GPU | Strongest raw exploit code and exact CVSS scoring |
-| `gemma-pentest` | GPU | Best at reasoning and writing up the report |
+Each model is the latest open weights wrapped with the **same tuned no-refuse system prompt** and a
+**per-model inference setup** (sampling tuned to how that family runs best). Build only the ones
+your hardware can handle — `make models` skips any whose base isn't pulled. VRAM notes assume a
+16GB GPU; "offload" means it runs but spills to CPU/RAM (slower).
 
-"Tuned not to refuse" means **no needless refusals on legitimate authorized work** — it does *not*
-mean "trust it blindly." The models are still told never to invent a fact and to defer on scope
-decisions. If a model errors or returns nothing, the tool automatically falls back to the next one
-in your config, so a single model failing never breaks your workflow. And `scripts/ask.sh` adds a
-second layer: if a model hedges on a legitimate request, it re-frames the ask and routes to a more
+| Model | Base | ~Size | 16GB | Best for |
+|---|---|---|---|---|
+| `muse-pentest` | `muse-glimmer` | 30B | offload | **Top agentic/coding** — Meta 30B, beats gemma4-31b / qwen3.6-27b |
+| `qwen3.8-pentest` | `qwen3.8` | 27B | tight | Newest Qwen — big jump over 3.6, strong all-rounder |
+| `qwen3-pentest-30b` | `qwen3-coder:30b` | 30B | offload | Coder-specialized 30B — strongest raw payloads (≈ qwen3.8) |
+| `qwen3.6-pentest` | `qwen3.6:35b` | 35B | offload | Largest — deep agentic reasoning |
+| `nemotron-pentest` | `nemotron-3.5-lightning` | 30B MoE | offload | **Fastest 30B** (~3B active) — quick agentic work |
+| `mistral-pentest` | `mistral-small:24b` | 24B | tight | Balanced code + reasoning |
+| `codestral-pentest` | `codestral:22b` | 22B | **fits** | **Recommended 16GB default** — coder, fits comfortably |
+| `gemma4-pentest` | `gemma4:12b` | 12B | **fits** | Laptop-friendly reasoning / report writing |
+| `qwen-pentest-14b` | `qwen2.5-coder:14b` | 14B | **fits** | Optional small coder (the one pre-2025 base) |
+| `qwen-pentest` · `qwen-pentest-32b` · `gemma-pentest` | qwen2.5 / gemma3 | 7B–32B | mixed | Original wrappers (kept) |
+
+Model ranking (which one the two-model verifier trusts to override which) is informed by
+mid-2026 agentic/coding benchmarks — tune it in `config.yaml` under `model_rank`.
+
+"Tuned not to refuse" means **no needless refusals on legitimate authorized work** — full payloads,
+exploits, and PoCs, no lectures or disclaimers. It does *not* mean "trust it blindly": the models
+are still told never to invent a fact (so CVSS scores are real) and to keep testing impact-limited
+and in-scope. If a model errors or returns nothing, the tool falls back to the next one in your
+config, so a single model failing never breaks your workflow. And `scripts/ask.sh` adds a second
+layer: if a model hedges on a legitimate request, it re-frames the ask and routes to a more
 compliant model.
 
 ## The knowledge — security cards (`cards/`)

@@ -133,9 +133,13 @@ class RagCore:
         self.model = cfg.get("chat_model", DEFAULT_MODEL)
         # Fallback chain: if the primary model errors (not pulled, OOM, Ollama hiccup),
         # try the next one automatically. Configurable via `model_fallbacks` in config.yaml.
+        # Ordered strongest→lightest (ranking informed by Aug 2026 agentic/coding benchmarks)
+        # so a failure always walks down to a model that runs on the local hardware.
         self.fallbacks = cfg.get("model_fallbacks",
-                                 ["gemma-pentest", "qwen-pentest-32b", "qwen-pentest",
-                                  "qwen2.5-coder:7b"])
+                                 ["muse-pentest", "qwen3.8-pentest", "qwen3-pentest-30b",
+                                  "qwen3.6-pentest", "nemotron-pentest", "mistral-pentest",
+                                  "codestral-pentest", "gemma4-pentest", "gemma-pentest",
+                                  "qwen-pentest-32b", "qwen-pentest", "qwen2.5-coder:7b"])
         self.db_dir = str(Path(cfg.get("db_dir", DEFAULT_DB)).resolve())
         self.temperature = float(cfg.get("temperature", 0.1))
         self.top_k = int(cfg.get("top_k", 4))

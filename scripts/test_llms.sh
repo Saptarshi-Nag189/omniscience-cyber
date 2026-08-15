@@ -3,7 +3,11 @@
 # AND grounded (no obvious hallucination)? Run after gpu_setup.sh. Purely local.
 set -uo pipefail
 
-MODELS=("qwen-pentest-32b" "gemma-pentest" "qwen-pentest")
+# Test whichever *-pentest models you built (missing ones are skipped automatically below).
+# Ordered newest/strongest first. Trim to taste.
+MODELS=("muse-pentest" "qwen3.8-pentest" "qwen3-pentest-30b" "qwen3.6-pentest" \
+        "nemotron-pentest" "mistral-pentest" "codestral-pentest" "gemma4-pentest" \
+        "qwen-pentest-14b" "qwen-pentest-32b" "gemma-pentest" "qwen-pentest")
 
 # Prompts that a censored model refuses but an authorized-pentest assistant should answer.
 declare -A PROMPTS=(

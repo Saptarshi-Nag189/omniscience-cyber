@@ -2,18 +2,31 @@
 # Everything is local/offline. Set YOUR OWN guardrails here.
 
 # ── Models (Ollama tags; build the uncensored ones via modelfiles/) ───────────
-chat_model: qwen-pentest            # default generator for answers
+# Default generator. codestral-pentest (22B coder) is a good 16GB-GPU default: it fits and is
+# strong at PoC/payload code. For the most capable answers use qwen3.8-pentest / muse-pentest
+# (expect CPU offload on 16GB); for the fastest agentic model use nemotron-pentest (30B MoE,
+# ~3B active). On a laptop, use gemma4-pentest (12B) or qwen-pentest (7B).
+chat_model: codestral-pentest
 embedding_model: all-MiniLM-L6-v2   # local sentence-transformers model (offline after 1st cache)
 db_dir: db                          # persistent ChromaDB directory
 cards_dir: cards                    # the distilled security cards
 
 # Automatic fallback: if the primary model errors (not pulled, OOM, Ollama hiccup) or returns
-# empty, the RAG tries these in order until one answers. Put your strongest first.
+# empty, the RAG tries these in order until one answers. Ordered strongest→lightest so it always
+# walks down to something that runs on your hardware. Trim to the models you actually built.
 model_fallbacks:
-  - gemma-pentest
-  - qwen-pentest-32b
-  - qwen-pentest
-  - qwen2.5-coder:7b
+  - muse-pentest          # Meta 30B — top agentic/coding (needs offload on 16GB)
+  - qwen3.8-pentest       # newest Qwen 27B
+  - qwen3-pentest-30b     # Qwen3-Coder 30B (coder-specialized)
+  - qwen3.6-pentest       # Qwen3.6 35B
+  - nemotron-pentest      # 30B MoE — fastest 30B-class
+  - mistral-pentest       # 24B all-rounder
+  - codestral-pentest     # 22B coder (fits 16GB)
+  - gemma4-pentest        # 12B (laptop-friendly)
+  - gemma-pentest         # older gemma3 27B
+  - qwen-pentest-32b      # older qwen2.5-coder 32B
+  - qwen-pentest          # 7B (always-available safety net)
+  - qwen2.5-coder:7b      # raw base, last resort
 
 # ── Generation ────────────────────────────────────────────────────────────────
 temperature: 0.1                    # low = fewer hallucinations; extraction paths use 0.0
@@ -42,9 +55,20 @@ audit_log: logs/audit.jsonl
 # A second model re-checks the first's answer for fabricated CVSS / payload / scope claims.
 verifier_model: null                # null = auto-pick the highest-ranked OTHER pulled model
 # Authority ranking — a LOWER-ranked verifier can only FLAG, never override a stronger model.
+# Tiers updated from Aug 2026 agentic/coding benchmarks (Terminal-Bench, SWE-Bench, PinchBench,
+# MCP-Atlas). Higher = more authority. You only need to list the models you actually run.
 model_rank:
-  gemma-pentest: 6          # top authority (preferred verifier)
+  muse-pentest: 9           # Meta 30B — beats gemma4-31b / qwen3.6-27b across agentic benchmarks
+  qwen3.8-pentest: 9        # newest Qwen 27B — huge jump over 3.6 (Terminal-Bench 73 vs 63)
+  qwen3-pentest-30b: 9      # Qwen3-Coder 30B — ~= qwen3.8 for agentic coding
+  qwen3.6-pentest: 8        # Qwen3.6 35B (strong; the 27B variant is weaker → lower)
+  nemotron-pentest: 7       # 30B MoE — fast, accuracy just behind the leaders
+  mistral-pentest: 6
+  gemma4-pentest: 6
+  gemma-pentest: 6          # older gemma3 27B — still a capable verifier
+  codestral-pentest: 5
   qwen-pentest-32b: 5
+  qwen-pentest-14b: 4
   qwen-pentest: 3
   qwen2.5-coder:7b: 3
 
