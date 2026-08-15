@@ -1,0 +1,19 @@
+# OAuth 2.0 / OIDC / SSO Flaws
+
+*Keywords: OAuth, OIDC, OpenID Connect, SSO, redirect_uri, state parameter, CSRF, authorization code, implicit flow, PKCE, token leakage, open redirect chaining, id_token, nonce, account takeover via oauth, scope escalation, client_secret, response_type token.*
+
+## What to test in an OAuth/OIDC flow
+
+OAuth/OIDC delegates login to a provider (Google, Okta, an internal IdP). The bugs are almost always in how the **client application** validates the flow, and they lead straight to account takeover. Map the flow first: the authorization request (`/authorize?client_id=&redirect_uri=&response_type=&scope=&state=`), the callback that receives `code`/`token`, and the token exchange. Key questions: is `redirect_uri` strictly validated? is `state` present and bound to the session (CSRF defense)? is PKCE used for public clients? does the app verify the `id_token` signature, `aud`, `iss`, and `nonce`? A weakness in any one of these is typically high severity.
+
+## OAuth attack surface (impact-limited proof)
+
+**redirect_uri manipulation** — the highest-yield bug. Try to make the provider send the `code`/`token` to an attacker-controlled URL: change `redirect_uri` to your in-scope host, or exploit loose matching (`https://target.com.evil.com`, `https://target.com@evil.com`, path append `https://target.com/legit/../evil`, subdomain, or an **open redirect on an allowlisted domain** to bounce the code out — chain with the open-redirect card). If the code/token lands on a host you control, that's account takeover — prove with a **test account's** code, don't capture real users. **Missing/638 static `state`** — no `state` (or a fixed one) means login CSRF: an attacker can force a victim to log into the attacker's account (or link the attacker's social account to the victim). **Implicit-flow token leak** — `response_type=token` puts the token in the URL fragment (referer/history leakage). **id_token validation gaps** — if the app accepts an `id_token` without verifying the signature/`aud`/`iss`, try `alg:none` or a token minted for a different client (see the JWT card).
+
+## OAuth logic and token-handling issues
+
+**Scope escalation** — request extra scopes and see if the client honors them beyond what the user consented to; **code reuse/replay** — a code that works more than once, or after the session it was issued for; **CSRF on the linking endpoint** — "connect your Google account" without state lets an attacker link their identity to a victim account (pre-account-takeover); **cross-provider confusion** — an email-based account merge that trusts an unverified `email` claim from an IdP, letting attacker@target via one provider take over the victim's password account. Also check the token exchange: is `client_secret` exposed in a SPA/mobile app (public client with a secret in the bundle)? For every finding, demonstrate with your own test identities on the in-scope tenant — the goal is proving the trust gap, not hijacking a real account.
+
+## OAuth/OIDC CVSS and remediation
+
+`redirect_uri` hijack or missing-`state` leading to full account takeover: `CVSS:3.1/AV:N/AC:L/PR:N/UI:R/S:U/C:H/I:H/A:N` ≈ 8.0 (UI:R for the victim click); account *linking* CSRF or scope escalation, typically High. Root cause: the relying party doesn't strictly validate `redirect_uri`, omits/ignores `state`/PKCE, or fails to verify the `id_token`. Remediation: exact-match `redirect_uri` against a registered allowlist (no wildcards, no path tricks, no substring match); require a cryptographically random, session-bound `state` and reject mismatches; use the authorization-code flow **with PKCE** (never implicit) for public clients; fully verify `id_token` signature, `iss`, `aud`, `exp`, and `nonce`; make codes single-use and short-lived; require re-consent for new scopes; and only trust a provider `email` when the provider marks it verified.

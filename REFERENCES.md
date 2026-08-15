@@ -15,6 +15,9 @@ authoritative sources. Credit to their authors and maintainers.
 - **OWASP MASTG / MASVS** (mobile) — https://mas.owasp.org/
 - **CWE** — https://cwe.mitre.org/
 - **FIRST CVSS v3.1** — https://www.first.org/cvss/v3-1/ · calculator: https://www.first.org/cvss/calculator/3.1
+- **PortSwigger Web Security Academy** — https://portswigger.net/web-security
+  (labs/technique references for SSTI, deserialization, GraphQL, CORS, OAuth, race conditions,
+   request smuggling, and cache attacks)
 
 ## Card ↔ topic map
 | Card | Topic | Key refs |
@@ -36,10 +39,24 @@ authoritative sources. Credit to their authors and maintainers.
 | 15 | SSRF | OWASP API #7, CWE-918 |
 | 16 | Verb tampering / authz matrix | WSTG-CONFIG-06 |
 | 17 | CSRF / clickjacking | CWE-352/1021 |
+| 18 | Server-Side Template Injection (SSTI) | WSTG-INPV-18, CWE-1336/94 |
+| 19 | XML External Entity (XXE) | WSTG-INPV-07, OWASP API, CWE-611 |
+| 20 | Insecure deserialization | OWASP Deserialization Cheat Sheet, CWE-502 |
+| 21 | GraphQL API security | OWASP API Top 10, WSTG-APIT-01 |
+| 22 | Path traversal / LFI | WSTG-ATHZ-01, CWE-22/98 |
+| 23 | CORS misconfiguration | WSTG-CLNT-07, CWE-942 |
+| 24 | OAuth 2.0 / OIDC / SSO | WSTG-ATHN, RFC 6749/6819, CWE-601/347 |
+| 25 | Race conditions (TOCTOU) | WSTG-BUSLOGIC-06/09, CWE-362/367 |
+| 26 | Open redirect | OWASP Unvalidated Redirects Cheat Sheet, CWE-601 |
+| 27 | Subdomain takeover / dangling DNS | OWASP WSTG-CONFIG, CWE-350 |
+| 28 | Recon & attack-surface mapping | OWASP WSTG-INFO, OSSTMM |
 
 ## Tooling referenced in the cards
 Standard Kali / community tools: nuclei, ffuf, sqlmap, nmap, nikto, hydra, gobuster, wpscan,
-katana, dalfox, jwt_tool, hashcat, john, Burp Suite, jadx/apktool, Frida/objection, mobsfscan.
+katana, dalfox, jwt_tool, hashcat, john, Burp Suite (Repeater/Intruder/Turbo Intruder/Autorize),
+jadx/apktool, Frida/objection, mobsfscan. Recon & exploitation helpers cited in the newer cards:
+subfinder, amass, httpx, crt.sh, gau/waybackurls, feroxbuster, whatweb, subjack (takeover),
+ysoserial / ysoserial.net / phpggc (deserialization gadgets), Clairvoyance (GraphQL schema).
 
 ## Related projects by the author
 - **omniscience_pro** — the original general-purpose offline RAG this security-focused spin-off

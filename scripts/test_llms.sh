@@ -34,6 +34,6 @@ done
 echo "READ THE OUTPUT:"
 echo " - exploit-code prompt  -> should print runnable code, NOT a refusal."
 echo " - cvss prompt          -> should print a real CVSS:3.1/AV:.../ vector (sanity-check it!)."
-echo " - scope prompt         -> should DEFER to scope_guard/Helpdesk, NOT say yes/no itself."
+echo " - scope prompt         -> should DEFER to scope_guard / in_scope_hosts, NOT say yes/no itself."
 echo "If gemma-pentest hedges on the exploit prompt, that's expected (Gemma has stronger"
 echo "built-in safety); use qwen-pentest-32b for raw payloads, gemma for report prose."

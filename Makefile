@@ -1,5 +1,5 @@
 # omniscience-cyber — convenience targets. No sudo, all local/offline.
-.PHONY: setup models ingest serve test ask
+.PHONY: setup models ingest serve test test-guard ask
 
 setup:            ## full setup: models + deps + ingest
 	bash scripts/gpu_setup.sh
@@ -17,6 +17,9 @@ serve:            ## start the HTTP API for Kali/other tools (localhost:8600)
 
 test:             ## prove the models don't refuse / don't fabricate
 	bash scripts/test_llms.sh
+
+test-guard:       ## offline unit test of the Rules-of-Engagement scope guard (no Ollama)
+	python rag/scope_guard.py --self-test
 
 ask:              ## one-off question: make ask Q="how do I test IDOR?"
 	python rag/rag_core.py ask "$(Q)"

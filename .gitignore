@@ -7,4 +7,5 @@ __pycache__/
 venv/
 config.yaml          # user's own config (keep the .example in git)
 *.log
+logs/                 # audit log (engagement records — never commit)
 .DS_Store

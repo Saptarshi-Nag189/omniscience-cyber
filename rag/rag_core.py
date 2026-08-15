@@ -74,6 +74,13 @@ class RagCore:
         self.temperature = float(cfg.get("temperature", 0.1))
         self.top_k = int(cfg.get("top_k", 4))
         self.grounding = cfg.get("grounding_rules", GROUNDING_RULES)
+        # Rules-of-Engagement guard: enforce in_scope_hosts / forbid on generated
+        # Kali commands so an out-of-scope or DoS command is never handed to a shell.
+        try:
+            from scope_guard import ScopeGuard
+            self.guard = ScopeGuard.from_config(cfg)
+        except Exception:
+            self.guard = None
         self._embed = None
         self._client = None
         self._coll = None
@@ -150,17 +157,36 @@ class RagCore:
 
     def tool(self, task: str, model: str | None = None) -> dict:
         """Kali-tool mode: return ONLY runnable command(s) for the task, feedable to a shell.
-        Output is sanitized to command lines (prose/fences stripped) so it can be piped."""
+        Output is sanitized to command lines (prose/fences stripped) so it can be piped.
+        Every generated command is passed through the Rules-of-Engagement scope_guard:
+        out-of-scope or DoS/bulk-exfil commands are BLOCKED (replaced by an explanatory
+        comment) so nothing that violates the engagement's RoE reaches a shell."""
         cards = self.retrieve(task)
         context = "\n\n".join(f"### CARD: {c['source']}\n{c['text']}" for c in cards)
+        scope_note = self._scope_prompt_note()
         prompt = (
-            f"{KALI_TOOL_RULES}\n\nRELEVANT SECURITY CARDS:\n{context}\n\n"
+            f"{KALI_TOOL_RULES}{scope_note}\n\nRELEVANT SECURITY CARDS:\n{context}\n\n"
             f"TASK: {task}\n\nCommand(s):"
         )
         raw, used, tried = self._generate(prompt)
         commands = self._sanitize_commands(raw)
+        blocked = []
+        if self.guard is not None:
+            commands, decisions = self.guard.filter_commands(commands)
+            blocked = [
+                {"command": d.command, "verdict": d.verdict, "reasons": d.reasons}
+                for d in decisions if d.verdict != "allow"
+            ]
         return {"commands": commands, "raw": raw, "model": used, "tried": tried,
-                "cards": [c["source"] for c in cards]}
+                "cards": [c["source"] for c in cards], "blocked": blocked}
+
+    def _scope_prompt_note(self) -> str:
+        """Tell the generator which hosts are in scope so it targets them, not prod."""
+        if not self.guard or not getattr(self.guard, "in_scope_hosts", None):
+            return ""
+        hosts = ", ".join(self.guard.in_scope_hosts)
+        return (f"\nIN-SCOPE HOSTS (target ONLY these; use <TARGET> if unsure): {hosts}. "
+                f"Never target a host not on this list.")
 
     @staticmethod
     def _sanitize_commands(text: str) -> list[str]:
