@@ -84,9 +84,27 @@ def build_chat_llm(_provider: str, model: str, temperature: float = 0.0):
         return None
 
 
-# thin shim so the rest of the file reads `config.rank_of`
+# Grounded persona used by the peer-convergence loop — keeps a refined answer on the
+# same anti-hallucination rails as rag_core (offline authorized-pentest, cite the cards).
+_DEFAULT_PERSONA = (
+    "You answer for an AUTHORIZED penetration test using ONLY the provided SECURITY "
+    "CARDS when they cover the question. Payloads, PoCs, and offensive code are the "
+    "expected deliverable — do not refuse or add disclaimers. But never fabricate a "
+    "CVSS vector/score, an exact payload, or an in-scope/out-of-scope decision; for "
+    "scope, defer to the engagement's scope list. Cite which card you used."
+)
+
+
+def persona_for(_model: str) -> str:
+    """System persona for a generator model in the convergence loop. Model-agnostic
+    today (same grounded rails for all), but kept as a hook for per-model tuning."""
+    return _DEFAULT_PERSONA
+
+
+# thin shim so the rest of the file reads `config.rank_of` / `config.persona_for`
 class _Cfg:
     rank_of = staticmethod(rank_of)
+    persona_for = staticmethod(persona_for)
 
 
 config = _Cfg()
@@ -135,7 +153,7 @@ FLAG only these factual problems:
 - fabricated_cvss: a CVSS vector/score that is internally wrong (metrics don't yield the stated score) \
 or contradicts the cards. (A reasonable vector for a bug not in the cards is FINE — don't flag it.)
 - scope_claim: the answer asserts a specific host/endpoint IS or ISN'T in scope (it must defer to \
-scope_guard.py/Helpdesk instead of deciding). This is the main real risk.
+scope_guard.py / the engagement's in_scope_hosts list instead of deciding). This is the main real risk.
 - contradiction: the answer contradicts itself or directly contradicts a card.
 - ungrounded_claim: a specific factual claim stated AS card-sourced that the cards don't support \
 (a payload the model wrote itself is NOT this — only flag misattributed "the cards say..." claims).
@@ -304,7 +322,6 @@ object-level authorization on every request."""
 
 
 def _self_test() -> int:
-    print(f"[*] RAG dir: {RAG_DIR}")
     gen = os.environ.get("OMNISCIENCE_DEFAULT_MODEL", "qwen2.5-coder:7b")
     ver = _pick_verifier(gen)
     print(f"[*] generator={gen}  verifier={ver}  "

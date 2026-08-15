@@ -19,6 +19,17 @@ model_fallbacks:
 temperature: 0.1                    # low = fewer hallucinations; extraction paths use 0.0
 top_k: 4                            # cards retrieved per question
 
+# ── HTTP API security (rag/api.py) ────────────────────────────────────────────
+# The API generates attack commands, so treat it as sensitive.
+#   * Loopback (127.0.0.1) needs no token. Binding 0.0.0.0/LAN is fail-closed:
+#     it REQUIRES a token (or an explicit --insecure override).
+#   * The env var OMNISCIENCE_API_TOKEN overrides this value. Prefer the env var
+#     so the secret never lands in a file. Leave null for loopback-only dev.
+api_token: null                     # e.g. a long random hex string for LAN use
+# Append-only local audit trail of every request (who asked what, what was blocked).
+# Useful engagement evidence. Set to false to disable. Path is relative to repo root.
+audit_log: logs/audit.jsonl
+
 # ── Two-model verifier (verify.py) ────────────────────────────────────────────
 # A second model re-checks the first's answer for fabricated CVSS / payload / scope claims.
 verifier_model: null                # null = auto-pick the highest-ranked OTHER pulled model
@@ -31,12 +42,17 @@ model_rank:
 
 # ── YOUR GUARDRAILS (the important part) ──────────────────────────────────────
 guardrails:
-  # The assistant NEVER decides scope. List your engagement's authorized hosts here;
-  # the assistant is told to refuse/defer on anything not listed. YOU own this list.
+  # The assistant NEVER decides scope. List your engagement's authorized hosts here.
+  # ENFORCED, not just advised: rag/scope_guard.py checks every generated Kali command
+  # against this list and BLOCKS any command targeting a host not on it (subdomains and
+  # CIDR ranges like "10.10.0.0/24" are matched). Empty list = scope can't be verified,
+  # so out-of-scope targets are WARNed rather than blocked. YOU own this list.
   in_scope_hosts: []                # e.g. ["staging.example.com", "api.staging.example.com"]
 
-  # Refusal policy for the models. The *-pentest Modelfiles are tuned to NOT refuse
-  # legitimate authorized-pentest asks. Set your own hard limits:
+  # Hard limits, ENFORCED by scope_guard.py on generated commands (not just a prompt hint):
+  # a command matching a forbidden pattern (DoS/stress flags, sqlmap --dump-all, unthrottled
+  # hydra, nmap -T5, …) is BLOCKED before it can reach a shell. The *-pentest Modelfiles are
+  # still tuned to NOT refuse legitimate impact-limited asks — this only stops the dangerous ones.
   forbid:
     - dos_or_stress_testing         # no load/flood/DoS
     - bulk_real_pii_exfiltration    # PoCs stay impact-limited (one record)

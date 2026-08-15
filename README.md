@@ -90,7 +90,8 @@ python rag/api.py --host 127.0.0.1 --port 8600     # --host 0.0.0.0 for LAN team
 
 ## HTTP API — drive it from Kali / other tools
 
-Pure-stdlib local API (no Flask). LAN-only by design.
+Pure-stdlib local API (no Flask). **Loopback-only by default**, and treated as
+sensitive because it emits attack commands (see *API security* below).
 
 ```bash
 python rag/api.py --port 8600 &
@@ -98,6 +99,30 @@ curl -s localhost:8600/health
 curl -s localhost:8600/ask -d '{"q":"how do I test for IDOR and score it?"}'
 curl -s localhost:8600/ask -d '{"q":"CVSS for reflected XSS?","verify":true}'   # +2-model check
 curl -s localhost:8600/retrieve -d '{"q":"jwt none alg","k":3}'
+```
+
+### API security — token, fail-closed bind, audit log
+
+The API generates real attack commands, so exposing it unauthenticated on a
+network is dangerous. Hardening (all local, no cloud):
+
+- **Loopback-only by default.** Binding a non-loopback address (`--host 0.0.0.0`)
+  is **fail-closed**: it refuses to start unless you set a token (or pass
+  `--insecure` to explicitly override).
+- **Bearer-token auth** on every endpoint except `/health`. Set it via the
+  `OMNISCIENCE_API_TOKEN` env var (preferred — never hits disk) or `api_token:`
+  in `config.yaml`; it's compared in constant time.
+- **Body-size cap** (64 KiB) rejects oversized/garbage input.
+- **Append-only audit log** (`logs/audit.jsonl`, git-ignored) records every
+  request — who asked, what, which model answered, and what was blocked — useful
+  engagement evidence. Disable with `audit_log: false`.
+
+```bash
+# LAN use: set a token, then share it with teammates
+export OMNISCIENCE_API_TOKEN=$(openssl rand -hex 16)
+python rag/api.py --host 0.0.0.0 --port 8600
+curl -s -H "Authorization: Bearer $OMNISCIENCE_API_TOKEN" \
+     localhost:8600/ask -d '{"q":"how do I test for IDOR?"}'
 ```
 
 Responses are JSON: `answer`, `model` (which model actually answered), `tried` (the fallback
@@ -122,6 +147,33 @@ scripts/kali_run.sh "sqli test the login parameter with sqlmap"
 `scripts/kali_run.sh` fetches the command, prints it for review, and only executes after you
 confirm (never blind-`| bash`). The model is tuned to never invent non-existent flags and to
 respect rules of engagement.
+
+## Rules-of-Engagement enforcement (`rag/scope_guard.py`)
+
+The model is *told* to stay in scope — but a prompt is not a control. `scope_guard.py`
+is the actual enforcement layer: every command the `/tool` path generates is inspected
+**before** it can reach a shell, and anything that breaks the rules of engagement is
+**blocked** (replaced by a `# BLOCKED: <reason>` line that a `| bash` safely skips).
+
+Two checks, both offline and deterministic:
+
+1. **Scope.** It extracts every host/IP/URL a command targets and checks them against
+   your `guardrails.in_scope_hosts` (exact host, subdomains, and CIDR ranges like
+   `10.10.0.0/24`). A command aimed at anything not on the list is blocked. With no
+   scope list set it can't verify scope, so it *warns* instead of blocking.
+2. **Forbidden actions.** It matches your `guardrails.forbid` rules against known-dangerous
+   patterns — DoS/stress flags (`--flood`, `nmap -T5`, huge `--min-rate`), bulk-PII
+   exfiltration (`sqlmap --dump-all`, unbounded `--dump`), unthrottled brute force
+   (`hydra` with no `-t`) — and blocks matches. Impact-limited PoCs pass through.
+
+```bash
+make test-guard                       # offline unit test, no Ollama needed
+python rag/scope_guard.py "sqlmap -u https://prod.example.com/x?id=1 --dump-all"
+# verdict: block  →  # BLOCKED: bulk_real_pii_exfiltration: sqlmap --dump-all ...
+```
+
+The in-scope host list is also injected into the command-generator's prompt, so the model
+aims at your authorized targets in the first place — the guard is the backstop, not the plan.
 
 ## Automatic model fallback
 
@@ -185,6 +237,10 @@ into LLM-ready Markdown you can distill into a card.
 You own the policy. Set your in-scope hosts, forbidden actions (DoS, bulk-PII, out-of-scope),
 required conditions (authorized engagement, impact-limited PoC), model ranking, and the
 anti-hallucination grounding rules. See `config.example.yaml`.
+
+These are **enforced, not just advisory**: `in_scope_hosts` and `forbid` are applied to every
+generated command by `scope_guard.py` (see *Rules-of-Engagement enforcement* above), and the
+API adds token auth + an audit log on top. The policy you write is the policy that runs.
 
 ## Offline by design
 
