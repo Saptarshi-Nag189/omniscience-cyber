@@ -38,9 +38,28 @@ from pathlib import Path
 # ── Self-contained model ranking + local Ollama call (no external deps) ───────
 # Authority tiers: a superior model is not second-guessed by a smaller one. Tune via
 # config.yaml (model_rank) or the OMNISCIENCE_MODEL_RANK env (JSON). Unknown -> 3.
+# Tiers updated from Aug 2026 agentic/coding benchmarks (Terminal-Bench, SWE-Bench, PinchBench,
+# MCP-Atlas). Higher = more authoritative verifier. Both the *-pentest wrapper and its base tag
+# are listed so a verifier is ranked whether it's the wrapped or raw model.
 _DEFAULT_RANK = {
-    "gemma-pentest": 6, "gemma3:27b": 6,               # top authority (preferred verifier)
+    # ── frontier mid-size (best overall agentic/coding) ──
+    "muse-pentest": 9, "muse-glimmer": 9,               # Meta 30B — beats gemma4-31b / qwen3.6-27b
+    "qwen3.8-pentest": 9, "qwen3.8": 9,                 # newest Qwen 27B — huge jump over 3.6
+    "qwen3-pentest-30b": 9, "qwen3-coder:30b": 9,       # coder-specialized 30B (~= qwen3.8)
+    # ── top / strong 30B-class ──
+    "qwen3.6-pentest": 8, "qwen3.6:35b": 8,             # strong 35B A3B
+    "qwen3.6": 7, "qwen3.6:27b": 7,                     # weaker 27B variant (< qwen3.8)
+    "nemotron-pentest": 7, "nemotron-3.5-lightning": 7, # fast MoE, accuracy just behind the leaders
+    "gemma4:31b": 7, "gemma4:26b": 7,
+    # ── solid mid ──
+    "mistral-pentest": 6, "mistral-small:24b": 6,
+    "gemma4-pentest": 6, "gemma4:12b": 6,
+    "gemma-pentest": 6, "gemma3:27b": 6,                # older gemma, still a capable verifier
+    # ── capable coders ──
+    "codestral-pentest": 5, "codestral:22b": 5,
     "qwen-pentest-32b": 5, "qwen2.5-coder:32b": 5,
+    "qwen-pentest-14b": 4, "qwen2.5-coder:14b": 4,
+    # ── light / fast ──
     "qwen-pentest": 3, "qwen2.5-coder:7b": 3, "qwen3.5:9b": 3,
     "qwen2.5-coder:1.5b": 1,
 }

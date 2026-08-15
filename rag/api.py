@@ -24,11 +24,14 @@ Run:
 
 Endpoints:
   GET  /health                         -> {"ok": true, "model": "..."}   (no auth)
-  POST /ask     {"q": "...", "verify": false, "model": null}
-        -> {"answer","model","tried","cards"[, "verdict"]}
+  POST /ask     {"q": "...", "verify": false, "model": null, "think": null}
+        -> {"answer","model","tried","cards","citations"[, "verdict"]}
+        ("think": true = max accuracy/slower, false = max speed, null = default)
+  POST /harden  {"q": "<finding / config / asset>", "think": null}   (DEFENSIVE: remediation)
+        -> {"answer","model","tried","cards","citations"}
   POST /tool    {"task": "..."}         -> PLAIN TEXT: runnable Kali command(s), one per line
         (also GET /tool?task=...  — so it's shell-pipe friendly)
-  POST /retrieve {"q": "...", "k": 4}   -> {"cards":[{id,source,text}]}
+  POST /retrieve {"q": "...", "k": 4}   -> {"cards":[{id,source,text,score,distance}]}
 
 Examples (from Kali — the /tool output feeds straight into a shell):
   curl -s localhost:8600/health
@@ -192,7 +195,8 @@ class Handler(BaseHTTPRequestHandler):
             task = (data.get("task") or data.get("q") or "").strip()
             if not task:
                 return self._send_text(400, "# missing 'task'")
-            return self._handle_tool(task, data.get("model"), json_out=bool(data.get("json")))
+            return self._handle_tool(task, data.get("model"), json_out=bool(data.get("json")),
+                                     think=data.get("think"))
         q = (data.get("q") or "").strip()
         if not q:
             return self._send(400, {"error": "missing 'q'"})
@@ -201,21 +205,28 @@ class Handler(BaseHTTPRequestHandler):
                 hits = RAG.retrieve(q, int(data.get("k", RAG.top_k)))
                 return self._send(200, {"cards": hits})
             if self.path.startswith("/ask"):
-                r = RAG.ask(q, model=data.get("model"))
-                out = {"answer": r["answer"], "model": r["model"],
-                       "tried": r["tried"], "cards": r["cards"]}
+                r = RAG.ask(q, model=data.get("model"), think=data.get("think"))
+                out = {"answer": r["answer"], "model": r["model"], "tried": r["tried"],
+                       "cards": r["cards"], "citations": r.get("citations")}
                 if data.get("verify"):
                     out["verdict"] = _verify(q, r["context"], r["answer"], r["model"])
                 _audit({"event": "ask", "ip": self.client_address[0], "q": q,
                         "model": r["model"], "verify": bool(data.get("verify"))})
                 return self._send(200, out)
+            if self.path.startswith("/harden"):
+                r = RAG.harden(q, model=data.get("model"), think=data.get("think"))
+                _audit({"event": "harden", "ip": self.client_address[0], "q": q,
+                        "model": r["model"]})
+                return self._send(200, {"answer": r["answer"], "model": r["model"],
+                                        "tried": r["tried"], "cards": r["cards"],
+                                        "citations": r.get("citations")})
             return self._send(404, {"error": "unknown endpoint"})
         except Exception as e:
             return self._send(500, {"error": str(e)})
 
-    def _handle_tool(self, task, model, json_out):
+    def _handle_tool(self, task, model, json_out, think=None):
         try:
-            r = RAG.tool(task, model=model)
+            r = RAG.tool(task, model=model, think=think)
         except Exception as e:
             return self._send_text(500, f"# error: {e}")
         _audit({"event": "tool", "ip": self.client_address[0], "task": task,
