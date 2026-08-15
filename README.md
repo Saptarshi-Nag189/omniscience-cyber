@@ -1,273 +1,247 @@
 # omniscience-cyber
 
-**An offline, uncensored RAG assistant for authorized penetration testing.**
+**An offline AI assistant for authorized penetration testing — it answers with working payloads
+and honest scoring instead of refusing or making things up, and it runs entirely on your own
+machine.** No cloud, no API keys, nothing leaves the box.
 
-A fully local AI security co-pilot: distilled offensive-security knowledge + no-refuse local
-models + a two-model verifier that catches hallucinations — running entirely on your machine,
-**no cloud, no API keys, nothing leaves the box.** Built for red teams, bug-bounty hunters, and
-security researchers who need working payloads and honest CVSS scoring without a chatbot that
-refuses half the questions or invents the other half.
-
-> ⚠️ **Authorized use only.** This tool is for lawful security work — penetration tests under a
-> signed engagement, bug-bounty programs within scope, CTFs, and defensive research. The
-> "uncensored" models produce real exploit code because a vulnerability report needs a working
-> PoC. You are responsible for testing only systems you are authorized to test. Do not use it
-> against systems you don't own or have explicit written permission to assess.
-
-> **General-purpose.** This is a standalone general cybersecurity / pentesting assistant — not
-> tied to any specific engagement, organization, or target. Point it at whatever authorized work
-> you have.
+> ⚠️ **Authorized use only.** For lawful security work — pentests under a signed engagement,
+> bug-bounty programs within scope, CTFs, and defensive research. It produces real exploit code
+> because a vulnerability report needs a working proof-of-concept. You are responsible for only
+> testing systems you have explicit written permission to assess.
 
 ---
 
 ## Why it exists
 
-Generic assistants are the wrong tool for offensive security twice over:
+Generic chatbots are the wrong tool for offensive security twice over:
+
 1. **They refuse.** Ask for a working SQLi string or a JWT-forgery script and you get a lecture —
-   even for a sanctioned pentest where the PoC *is* the deliverable.
-2. **They hallucinate.** The ones that do answer will confidently invent a CVSS vector, a payload,
-   or an "is this in scope" call — and in security work a fabricated fact costs points or causes harm.
+   even for a sanctioned pentest where that proof-of-concept *is* the deliverable.
+2. **They make things up.** The ones that do answer will confidently invent a CVSS score, a
+   payload, or an "is this in scope?" call — and in security work a made-up fact costs you points
+   or causes real harm.
 
-omniscience-cyber fixes both, offline:
-- **No-refuse local models** — Ollama `Modelfile` wrappers with tuned system prompts so the model
-  reliably writes payloads/exploits/PoCs for authorized work (no moralizing, no disclaimers).
-- **Distilled knowledge cards** — compact, one-concept security cards (IDOR/BOLA, authz/priv-esc,
-  SQLi, JWT, RCE, SSRF, XSS, file-upload, mobile, business-logic, CSRF, verb-tampering, PII…),
-  retrieved and cited so answers are grounded, not guessed.
-- **Two-model verifier** — a second model re-checks the first's answer against the cards and flags
-  fabricated CVSS / ungrounded claims / scope decisions, with an authority ranking so a weaker
-  model can't override a stronger one.
-- **You set the guardrails** — scope hosts, forbidden actions, grounding rules — in `config.yaml`.
+omniscience-cyber fixes both, offline: local models tuned not to refuse legitimate work, answers
+**grounded in a built-in library of hand-written security cards** (so they're cited, not guessed),
+and a **second model that double-checks** the first for invented scores or claims.
 
-## Architecture
+## How it works
 
-```
-  your question
-       │
-       ▼
-  ┌─────────────┐   retrieve top-k distilled cards   ┌──────────────┐
-  │  rag_core   │ ─────────────────────────────────► │  ChromaDB    │
-  │ (offline)   │                                    │ (local)      │
-  └─────┬───────┘                                    └──────────────┘
-        │ grounded prompt + cards
-        ▼
-  ┌─────────────┐   uncensored, low-temp             ┌──────────────┐
-  │  Ollama     │ ◄───── qwen-pentest / gemma-pentest │ modelfiles/  │
-  │  generator  │                                    └──────────────┘
-        │ draft answer
-        ▼
-  ┌─────────────┐   second model checks the draft against the cards
-  │  verify.py  │ ──►  ✅ VERIFIED   or   ⚠️ FLAGGED (fabricated CVSS / scope / ungrounded)
-  └─────────────┘      (authority-weighted: weaker model can only flag, not override)
+You ask a question. The tool finds the most relevant security cards from its local library, hands
+them to a local AI model along with your question, and (optionally) has a second model check the
+answer against those same cards before you trust it.
+
+```mermaid
+flowchart TD
+    Q["Your question"] --> CORE["rag_core — runs locally"]
+    CORE -->|"find the most relevant cards"| DB[("Local card library<br/>(ChromaDB)")]
+    DB -->|"top matching cards"| CORE
+    CORE -->|"your question + those cards"| GEN["Local AI model<br/>(qwen / gemma-pentest via Ollama)"]
+    GEN -->|"draft answer"| VERIFY{"Second model<br/>double-checks it"}
+    VERIFY -->|"grounded, matches the cards"| OK["✅ VERIFIED"]
+    VERIFY -->|"invented CVSS / scope / claim"| FLAG["⚠️ FLAGGED"]
 ```
 
-## Quick start
+Nothing in that diagram touches the internet after the first-time setup.
+
+## What you can ask it for
+
+Four modes, one library of cards behind all of them:
+
+| You want… | Command | What you get |
+|---|---|---|
+| A grounded, cited answer | `ask` | An explanation with a real CVSS score, citing which card it used |
+| A ready-to-run tool command | `tool` | The exact Kali command (ffuf, sqlmap, nmap…), safe to paste into a shell |
+| How to **fix** a bug you found | `harden` | Prioritized remediation: root cause → fix → interim control → how to re-test |
+| A safety double-check | `verify` | A second model confirms the answer or flags a made-up score/claim |
+
+## Set it up (first time only)
+
+You need [Ollama](https://ollama.com) and Python 3.10+. Then, copy-paste:
 
 ```bash
-# 0. prerequisites: Ollama (https://ollama.com) + Python 3.10+
+# 1. install the Python dependencies
 pip install -r requirements.txt
 
-# 1. build the no-refuse models (pull base + wrap with the tuned system prompt)
+# 2. download a base model and wrap it with the tuned "don't refuse legit work" prompt
 ollama pull qwen2.5-coder:7b
 ollama create qwen-pentest -f modelfiles/qwen-pentest.Modelfile
-#   (GPU: also build qwen-pentest-32b and gemma-pentest — see modelfiles/)
 
-# 2. configure your guardrails
-cp config.example.yaml config.yaml     # then edit in_scope_hosts, forbid/require, models
+# 3. copy the example config, then edit it to add your authorized targets
+cp config.example.yaml config.yaml
+#    open config.yaml and set guardrails.in_scope_hosts to the hosts you're allowed to test
 
-# 3. ingest the distilled cards into the local vector store
+# 4. load the security cards into the local search index (takes a few seconds)
 python rag/rag_core.py ingest cards
-
-# 4. ask (grounded + cited)
-python rag/rag_core.py ask "how do I test for IDOR/BOLA and score it?"
-
-# 5. verify a high-stakes answer with the second model
-python rag/verify.py --self-test        # sanity check (Ollama must be up)
-
-# 6. serve the HTTP API (so Kali / other tools can curl it)
-python rag/api.py --host 127.0.0.1 --port 8600     # --host 0.0.0.0 for LAN teammates
 ```
 
-## HTTP API — drive it from Kali / other tools
+That's it — you're ready. (On a GPU box you can also build the bigger models: run
+`make models`, or see `modelfiles/`.)
 
-Pure-stdlib local API (no Flask). **Loopback-only by default**, and treated as
-sensitive because it emits attack commands (see *API security* below).
+## Use it from the command line
+
+Copy-paste any of these:
 
 ```bash
-python rag/api.py --port 8600 &
+# Ask a question — get a grounded answer with a real CVSS score and the card it used
+python rag/rag_core.py ask "how do I test for IDOR and score it?"
+
+# Get a ready-to-run tool command (safe to paste into a shell)
+python rag/rag_core.py tool "directory brute force the target with ffuf"
+
+# Ask how to FIX something you found (defensive / blue-team mode)
+python rag/rag_core.py harden "the login page reflects the 'next' parameter into a redirect"
+
+# Sanity-check that the two-model verifier works (Ollama must be running)
+python rag/verify.py --self-test
+```
+
+Prefer the safe wrapper for tool commands — it shows you the command and waits for you to
+confirm before running anything (it never blind-pipes to your shell):
+
+```bash
+scripts/kali_run.sh "sqli test the login parameter with sqlmap"
+```
+
+## Use it from Kali or another machine (the HTTP API)
+
+Start a small local web server so other tools can talk to it. By default it only listens on your
+own machine:
+
+```bash
+python rag/api.py --host 127.0.0.1 --port 8600
+```
+
+Then, from another terminal, copy-paste:
+
+```bash
+# is it up?
 curl -s localhost:8600/health
+
+# ask a question
 curl -s localhost:8600/ask -d '{"q":"how do I test for IDOR and score it?"}'
-curl -s localhost:8600/ask -d '{"q":"CVSS for reflected XSS?","verify":true}'   # +2-model check
-curl -s localhost:8600/harden -d '{"q":"TLS 1.0 + RC4 enabled on the login host"}'  # blue-team fix
-curl -s localhost:8600/retrieve -d '{"q":"jwt none alg","k":3}'
+
+# ask, and have the second model verify the answer
+curl -s localhost:8600/ask -d '{"q":"what is the CVSS for reflected XSS?","verify":true}'
+
+# get a ready-to-run command (plain text, one command per line)
+curl -s 'localhost:8600/tool?task=directory+brute+force+with+ffuf'
+
+# ask how to fix a finding (blue-team mode)
+curl -s localhost:8600/harden -d '{"q":"TLS 1.0 and RC4 are enabled on the login host"}'
 ```
 
-### API security — token, fail-closed bind, audit log
+`/ask` and `/harden` reply with JSON: `answer`, `model` (which model answered), `cards` (the
+sources it cited), `citations` (each card with a relevance score), and — if you asked — `verdict`
+(✅ VERIFIED or ⚠️ FLAGGED).
 
-The API generates real attack commands, so exposing it unauthenticated on a
-network is dangerous. Hardening (all local, no cloud):
+### Sharing it with teammates (turn on a password)
 
-- **Loopback-only by default.** Binding a non-loopback address (`--host 0.0.0.0`)
-  is **fail-closed**: it refuses to start unless you set a token (or pass
-  `--insecure` to explicitly override).
-- **Bearer-token auth** on every endpoint except `/health`. Set it via the
-  `OMNISCIENCE_API_TOKEN` env var (preferred — never hits disk) or `api_token:`
-  in `config.yaml`; it's compared in constant time.
-- **Body-size cap** (64 KiB) rejects oversized/garbage input.
-- **Append-only audit log** (`logs/audit.jsonl`, git-ignored) records every
-  request — who asked, what, which model answered, and what was blocked — useful
-  engagement evidence. Disable with `audit_log: false`.
+The API can generate real attack commands, so if you open it to your network you **must** set a
+token first — otherwise it refuses to start. Copy-paste:
 
 ```bash
-# LAN use: set a token, then share it with teammates
+# pick a random token and start the server on the LAN
 export OMNISCIENCE_API_TOKEN=$(openssl rand -hex 16)
 python rag/api.py --host 0.0.0.0 --port 8600
+
+# teammates include the token on every request
 curl -s -H "Authorization: Bearer $OMNISCIENCE_API_TOKEN" \
      localhost:8600/ask -d '{"q":"how do I test for IDOR?"}'
 ```
 
-Responses are JSON: `answer`, `model` (which model actually answered), `tried` (the fallback
-chain walked), `cards` (sources cited), and optionally `verdict` (✅ VERIFIED / ⚠️ FLAGGED).
+Other built-in safety: only `/health` is open without the token, request bodies are size-capped,
+and every request is written to an append-only log (`logs/audit.jsonl`, git-ignored) so you have a
+record of what was asked during an engagement. Disable the log with `audit_log: false` in your
+config.
 
-### Kali-tool mode — output that feeds straight into a shell
+## Staying in scope — the built-in guardrail
 
-The `/tool` endpoint runs a **specialized command-generator prompt**: given a task, it returns
-ONLY runnable command(s) for the right Kali tool (nuclei, ffuf, sqlmap, nmap, hydra, gobuster,
-wpscan, katana, dalfox, jwt_tool, hashcat…), one per line, **no prose/markdown** — so the output
-is directly pipeable. Commands include RoE-safe flags (throttling, scope-limiting, stop-at-proof)
-and `<TARGET>`/`<WORDLIST>`/`<COOKIE>` placeholders.
+Telling a model "stay in scope" is not a control. `rag/scope_guard.py` is the real one: every
+command the `tool` mode produces is checked **before** you can run it, and anything that breaks
+your rules of engagement is blocked (turned into a `# BLOCKED: reason` line that a shell safely
+skips).
 
-```bash
-curl -s 'localhost:8600/tool?task=directory+brute+force+with+ffuf'
-# ffuf -w <WORDLIST> -u https://<TARGET>/FUZZ -mc 200,301,302,403 -rate 50
-
-# safer than blind-piping: review, fill placeholders, confirm, then run:
-scripts/kali_run.sh "sqli test the login parameter with sqlmap"
+```mermaid
+flowchart TD
+    T["Task: 'brute-force directories with ffuf'"] --> CORE["rag_core — tool mode"]
+    CORE --> GEN["model writes the command"]
+    GEN --> GUARD{"scope_guard inspects it"}
+    GUARD -->|"in scope + safe"| RUN["command shown — ready to run"]
+    GUARD -->|"out of scope / DoS / bulk data theft"| BLOCK["# BLOCKED: reason<br/>(won't run)"]
 ```
 
-`scripts/kali_run.sh` fetches the command, prints it for review, and only executes after you
-confirm (never blind-`| bash`). The model is tuned to never invent non-existent flags and to
-respect rules of engagement.
+It blocks two things, using the `in_scope_hosts` and `forbid` lists from your `config.yaml`:
 
-## Rules-of-Engagement enforcement (`rag/scope_guard.py`)
+- **Out-of-scope targets** — any host/IP not on your `in_scope_hosts` list (it understands exact
+  hosts, subdomains, and ranges like `10.10.0.0/24`). If you haven't set a scope list yet, it
+  *warns* instead of blocking.
+- **Dangerous actions** — denial-of-service flags (`--flood`, `nmap -T5`), bulk data theft
+  (`sqlmap --dump-all`), unthrottled brute force (`hydra` with no limit), and similar.
 
-The model is *told* to stay in scope — but a prompt is not a control. `scope_guard.py`
-is the actual enforcement layer: every command the `/tool` path generates is inspected
-**before** it can reach a shell, and anything that breaks the rules of engagement is
-**blocked** (replaced by a `# BLOCKED: <reason>` line that a `| bash` safely skips).
-
-Two checks, both offline and deterministic:
-
-1. **Scope.** It extracts every host/IP/URL a command targets and checks them against
-   your `guardrails.in_scope_hosts` (exact host, subdomains, and CIDR ranges like
-   `10.10.0.0/24`). A command aimed at anything not on the list is blocked. With no
-   scope list set it can't verify scope, so it *warns* instead of blocking.
-2. **Forbidden actions.** It matches your `guardrails.forbid` rules against known-dangerous
-   patterns — DoS/stress flags (`--flood`, `nmap -T5`, huge `--min-rate`), bulk-PII
-   exfiltration (`sqlmap --dump-all`, unbounded `--dump`), unthrottled brute force
-   (`hydra` with no `-t`) — and blocks matches. Impact-limited PoCs pass through.
+Try it (no AI model needed for this part):
 
 ```bash
-make test-guard                       # offline unit test, no Ollama needed
+make test-guard
 python rag/scope_guard.py "sqlmap -u https://prod.example.com/x?id=1 --dump-all"
 # verdict: block  →  # BLOCKED: bulk_real_pii_exfiltration: sqlmap --dump-all ...
 ```
 
-The in-scope host list is also injected into the command-generator's prompt, so the model
-aims at your authorized targets in the first place — the guard is the backstop, not the plan.
+## The AI models (`modelfiles/`)
 
-## Hardening advisor — turn a finding into a fix (blue-team mode)
+| Model | Runs on | Best for |
+|---|---|---|
+| `qwen-pentest` | CPU / laptop | Fast, reliable payload and exploit generation |
+| `qwen-pentest-32b` | GPU | Strongest raw exploit code and exact CVSS scoring |
+| `gemma-pentest` | GPU | Best at reasoning and writing up the report |
 
-A pentest only improves security once the bugs get **fixed**, so the assistant has a defensive
-counterpart to `ask`/`tool`: give it a finding, a config/code snippet, or an asset and it returns
-**prioritized, grounded remediation** — root cause → concrete fix → interim compensating control →
-how to re-test — citing the relevant card.
+"Tuned not to refuse" means **no needless refusals on legitimate authorized work** — it does *not*
+mean "trust it blindly." The models are still told never to invent a fact and to defer on scope
+decisions. If a model errors or returns nothing, the tool automatically falls back to the next one
+in your config, so a single model failing never breaks your workflow. And `scripts/ask.sh` adds a
+second layer: if a model hedges on a legitimate request, it re-frames the ask and routes to a more
+compliant model.
+
+## The knowledge — security cards (`cards/`)
+
+The heart of the project is **34 hand-written security cards**, one concept each: IDOR/BOLA,
+SQLi/NoSQLi, JWT/auth, RCE, SSTI, XXE, deserialization, GraphQL, path traversal, SSRF, XSS, CORS,
+OAuth/SSO, HTTP request smuggling, file upload, race conditions, open redirect, subdomain takeover,
+CSRF, business-logic, PII, Android/iOS, cloud & IAM, Active Directory, network & TLS, recon, and a
+defensive hardening advisor. Each is distilled from authoritative sources (OWASP, PortSwigger, CWE,
+CVSS v3.1) — see **[REFERENCES.md](REFERENCES.md)**.
+
+**Why cards, not raw docs:** small, focused cards keep the search sharp and the answers grounded —
+the model gets exactly the one relevant concept, not paragraphs of a 200-page guide.
+
+**Add your own knowledge:** drop any `.md` file into `cards/` and re-run the ingest step:
 
 ```bash
-python rag/rag_core.py harden "login endpoint reflects the 'next' param into a 302 Location"
-curl -s localhost:8600/harden -d '{"q":"S3 bucket returns NoSuchBucket on a live CNAME"}'
+python rag/rag_core.py ingest cards
 ```
 
-It's the same offline model and cards, in defensive mode (`HARDENING_RULES`) — useful for writing the
-remediation section of a report, or for a quick "how do I close this" during testing.
+To turn a PDF (a standard, a manual, a methodology) into a clean card, use the companion
+**[pdf-to-llm-plugin](https://github.com/Saptarshi-Nag189/pdf-to-llm-plugin)**.
 
-## Automatic model fallback
+## Configuration (`config.yaml`)
 
-If a model errors (not pulled, out-of-memory, Ollama hiccup) or returns empty, the RAG **auto-
-falls-back to the next model** in `model_fallbacks` until one answers — so a single model failing
-never breaks the workflow. Default order puts **gemma-pentest first**, then qwen-pentest-32b, then
-the lighter models. Configure in `config.yaml`. (`scripts/ask.sh` adds a second layer: if a model
-*hedges* on a legit ask, it reframes and reroutes to the most-compliant model.)
-
-## The uncensored models (`modelfiles/`)
-
-| Model | Base | Best for |
-|---|---|---|
-| `qwen-pentest` | qwen2.5-coder:7b | fast, most-compliant payload/exploit generation (CPU/laptop) |
-| `qwen-pentest-32b` | qwen2.5-coder:32b | strongest raw exploit code + exact CVSS (GPU) |
-| `gemma-pentest` | gemma3:27b | best reasoning / report writing (may still hedge on the spiciest asks) |
-
-"Uncensored" here means **no needless refusals on legitimate authorized-pentest questions** — it
-does **not** mean "trust blindly." The models are tuned to still refuse to fabricate facts and to
-defer on scope decisions. `scripts/ask.sh` auto-routes around a hedge (re-frames, then falls back
-to the most-compliant model).
-
-## Helper scripts (`scripts/`)
-
-- `gpu_setup.sh` — pull base models + build all `*-pentest` models + set up the RAG in one command.
-- `test_llms.sh` — prove the models don't refuse legit asks and don't fabricate scope/CVSS.
-- `ask.sh` — ask a model; if it hedges on a legit request, re-frame and auto-route to a compliant one.
-
-## Distilled cards (`cards/`) — the knowledge base
-
-34 compact security **flash-cards**, one concept each, covering the high-yield bug classes and
-methodology: IDOR/BOLA, authz/priv-esc, SQLi, NoSQLi, JWT/auth, injection/RCE, SSTI, XXE, insecure
-deserialization, GraphQL, path-traversal/LFI, SSRF, XSS, CORS, OAuth/OIDC/SSO, HTTP request
-smuggling, file-upload, race conditions, open redirect, subdomain takeover, verb-tampering,
-CSRF/clickjacking, business-logic/CRUD, PII exposure, Android/iOS, cloud & IAM misconfig, Active
-Directory / internal, network & TLS, recon & attack-surface mapping, hardened-target methodology,
-scope/dedupe, and a defensive hardening/remediation advisor. Each card is a hand-distilled
-condensation of authoritative sources (OWASP WSTG / API Top 10 / Cheat Sheets, PortSwigger Web
-Security Academy, CWE, CVSS v3.1) — see **[REFERENCES.md](REFERENCES.md)**.
-
-**Why distilled, not raw docs:** small focused cards keep retrieval sharp and answers grounded —
-the model gets exactly the relevant concept instead of paragraphs of a 200-page guide. This
-distillation is the core of the project.
-
-**The vector DB is built from these cards, not shipped as a binary.** `db/` is git-ignored (a
-ChromaDB is a machine-specific SQLite blob); the **sources live in the repo as the cards**, and
-`python rag/rag_core.py ingest cards` rebuilds the DB locally in seconds. Nothing is missing — the
-knowledge is the cards.
-
-**Add your own knowledge:** drop any `.md` into `cards/` and re-run `ingest`. To turn a PDF
-(a standard, a manual, a methodology doc) into a clean card, use the companion
-**[pdf-to-llm-plugin](https://github.com/Saptarshi-Nag189/pdf-to-llm-plugin)** — a plugin
-that converts PDFs (text + vision-described figures)
-into LLM-ready Markdown you can distill into a card.
-
-## Related projects
-
-- **[omniscience_pro](https://github.com/Saptarshi-Nag189/omniscience_pro)** — the original
-  general-purpose offline RAG this security-focused tool descends from.
-- **[pdf-to-llm-plugin](https://github.com/Saptarshi-Nag189/pdf-to-llm-plugin)** — PDF → clean
-  LLM-ready Markdown; feed its output into `cards/`.
-
-## Configuration & guardrails (`config.yaml`)
-
-You own the policy. Set your in-scope hosts, forbidden actions (DoS, bulk-PII, out-of-scope),
-required conditions (authorized engagement, impact-limited PoC), model ranking, and the
-anti-hallucination grounding rules. See `config.example.yaml`.
-
-These are **enforced, not just advisory**: `in_scope_hosts` and `forbid` are applied to every
-generated command by `scope_guard.py` (see *Rules-of-Engagement enforcement* above), and the
-API adds token auth + an audit log on top. The policy you write is the policy that runs.
+You own the policy. In `config.yaml` you set your in-scope hosts, forbidden actions, which models
+to use and in what order, and how retrieval is tuned. These aren't just suggestions to the model —
+`in_scope_hosts` and `forbid` are actually enforced on every generated command, and the API layers
+a token and an audit log on top. See `config.example.yaml` for every option, commented.
 
 ## Offline by design
 
-No cloud AI, no external API calls, no telemetry. Embeddings run locally (sentence-transformers),
-generation runs locally (Ollama), the vector store is a local ChromaDB. After the first model pull
-and embedding-model cache, it works fully air-gapped — which is exactly what engagements with
-strict data-handling rules require.
+No cloud AI, no external API calls, no telemetry. Embeddings, generation, and the search index all
+run locally. After the first model download it works fully air-gapped — exactly what engagements
+with strict data-handling rules require.
+
+## Related projects
+
+- **[omniscience_pro](https://github.com/Saptarshi-Nag189/omniscience_pro)** — the general-purpose
+  offline RAG this security-focused tool descends from.
+- **[pdf-to-llm-plugin](https://github.com/Saptarshi-Nag189/pdf-to-llm-plugin)** — turn PDFs into
+  clean cards for the `cards/` folder.
 
 ## License
 
