@@ -52,6 +52,26 @@ def _tokens(text: str) -> set[str]:
     return {w for w in _re.findall(r"[a-z0-9]{3,}", (text or "").lower()) if w not in _STOP}
 
 
+# The 2026 models (qwen3.x, muse-glimmer, nemotron, gemma4) are "thinking" models — they emit a
+# <think>…</think> reasoning trace before the answer. On the /tool path that trace must NOT reach
+# the shell, so we strip these blocks from every model response (defense-in-depth alongside the
+# think=False request in _ollama_try). Harmless on ask/harden too — keeps the final answer clean.
+_REASONING_RE = _re.compile(
+    r"<(think|thinking|reasoning|analysis|thought)\b[^>]*>.*?</\1\s*>",
+    _re.DOTALL | _re.IGNORECASE)
+
+
+def _strip_reasoning(text: str) -> str:
+    """Remove <think>/<reasoning>/… blocks (and any stray such tags) from a model response."""
+    if not text:
+        return text
+    text = _REASONING_RE.sub("", text)
+    # drop any orphaned open/close tags left by truncated streams
+    text = _re.sub(r"</?(think|thinking|reasoning|analysis|thought)\b[^>]*>", "", text,
+                   flags=_re.IGNORECASE)
+    return text.strip()
+
+
 def _keyword_overlap(q_tokens: set[str], card_text: str) -> float:
     """Fraction of the query's meaningful tokens that appear in the card's title + Keywords
     line. 0..1. This is the keyword half of hybrid retrieval — it rewards a card that
@@ -84,7 +104,8 @@ GROUNDING_RULES = (
 KALI_TOOL_RULES = (
     "You are a command generator for an AUTHORIZED penetration test on Kali Linux. Output ONLY "
     "exact, RUNNABLE command(s) for the right standard tool — one command per line, NO prose, "
-    "NO markdown fences, NO numbering, NO explanation. Every line must be something a shell can "
+    "NO markdown fences, NO numbering, NO explanation, and NO <think>/reasoning blocks (emit the "
+    "commands only, not your thought process). Every line must be something a shell can "
     "execute as-is (or a leading '# comment'). Tools you may use (pick the best fit for the task):\n"
     "  recon/discovery: nmap, masscan, subfinder, amass, httpx, whatweb, gobuster, ffuf, "
     "feroxbuster, dirsearch, katana, gau, waybackurls\n"
@@ -295,7 +316,8 @@ class RagCore:
             f"{KALI_TOOL_RULES}{scope_note}\n\nRELEVANT SECURITY CARDS:\n{context}\n\n"
             f"TASK: {task}\n\nCommand(s):"
         )
-        raw, used, tried = self._generate(prompt)
+        # think=False: on the /tool path we want commands only, not a thinking model's reasoning.
+        raw, used, tried = self._generate(prompt, preferred=model, think=False)
         commands = self._sanitize_commands(raw)
         blocked = []
         if self.guard is not None:
@@ -336,7 +358,8 @@ class RagCore:
         `# not a tool task`). Errs toward dropping a non-runnable prose line rather than
         emitting it — the point of /tool is output a shell can execute as-is."""
         import re
-        text = re.sub(r"```[a-zA-Z]*", "", text or "")
+        text = _strip_reasoning(text or "")          # drop any <think> trace a thinking model left
+        text = re.sub(r"```[a-zA-Z]*", "", text)
         out = []
         for ln in text.splitlines():
             s = ln.strip()
@@ -364,13 +387,15 @@ class RagCore:
             out.append(s.strip("`"))
         return out
 
-    def _generate(self, prompt: str, preferred: str | None = None):
-        """Try each model in the chain until one succeeds. Returns (answer, model_used, tried)."""
+    def _generate(self, prompt: str, preferred: str | None = None, think: bool | None = None):
+        """Try each model in the chain until one succeeds. Returns (answer, model_used, tried).
+        `think=False` asks a thinking model to skip its reasoning trace (used by the /tool path
+        so output stays pipe-clean); None leaves the model default."""
         tried = []
         last_err = "no models available"
         for m in self._model_chain(preferred):
             tried.append(m)
-            ok, out = self._ollama_try(prompt, m)
+            ok, out = self._ollama_try(prompt, m, think=think)
             if ok:
                 return out, m, tried
             last_err = out
@@ -378,13 +403,23 @@ class RagCore:
         return (f"[rag] all models failed. Last error: {last_err}. "
                 f"Is `ollama serve` running and at least one model built?"), None, tried
 
-    def _ollama_try(self, prompt: str, model: str):
-        """Return (True, text) on success, (False, error_str) on failure."""
+    def _ollama_try(self, prompt: str, model: str, think: bool | None = None):
+        """Return (True, text) on success, (False, error_str) on failure. Reasoning traces from
+        thinking models are stripped so the final answer/commands are clean."""
         try:
             import ollama
-            r = ollama.chat(model=model, messages=[{"role": "user", "content": prompt}],
-                            options={"temperature": self.temperature})
-            text = r["message"]["content"]
+            kwargs = dict(model=model, messages=[{"role": "user", "content": prompt}],
+                          options={"temperature": self.temperature})
+            if think is None:
+                r = ollama.chat(**kwargs)
+            else:
+                # think= is only supported on newer ollama clients + thinking models; if the
+                # client/model rejects it, fall back to a plain call rather than skipping the model.
+                try:
+                    r = ollama.chat(think=think, **kwargs)
+                except Exception:
+                    r = ollama.chat(**kwargs)
+            text = _strip_reasoning(r["message"]["content"])
             if not text or not text.strip():
                 return False, "empty response"
             return True, text

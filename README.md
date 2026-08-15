@@ -218,6 +218,26 @@ config, so a single model failing never breaks your workflow. And `scripts/ask.s
 layer: if a model hedges on a legitimate request, it re-frames the ask and routes to a more
 compliant model.
 
+### Picking the right build for your hardware
+
+Each `FROM` line uses the model's **default build** (a ~Q4 quant — e.g. `qwen3.8` is ~18GB with a
+256K context window). To match your hardware, change that one `FROM` line in the modelfile:
+
+- **Smaller / faster (low VRAM):** keep the default Q4, e.g. `FROM qwen3.8:27b-q4_K_M`.
+- **Higher quality (more VRAM):** a bigger quant, e.g. `FROM qwen3.8:27b-q8_0` (~30GB) or
+  `:27b-bf16` (~56GB).
+- **Apple Silicon:** use the **`-mlx`** builds (Metal-optimized for unified memory), e.g.
+  `FROM qwen3.8:27b-mlx` or `FROM muse-glimmer:30b-mlx`. (`-nvfp4` builds are the smallest on
+  NVIDIA — e.g. `muse-glimmer:30b-nvfp4` is ~17GB.)
+- **Long context:** these models support large windows (muse-glimmer 128K, qwen3.8 256K), but
+  `num_ctx` is set conservatively (16K–32K) to save memory — raise the `PARAMETER num_ctx` line if
+  you have the headroom.
+
+Run `ollama show <tag>` to see a build's exact size, context, and quant before you commit to it.
+
+These are "thinking" models: on `/ask` and `/harden` they reason internally and you get the clean
+answer; on `/tool` the reasoning is suppressed and stripped so the output stays pipe-clean.
+
 ## The knowledge — security cards (`cards/`)
 
 The heart of the project is **34 hand-written security cards**, one concept each: IDOR/BOLA,
