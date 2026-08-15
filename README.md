@@ -204,11 +204,14 @@ to the most-compliant model).
 
 ## Distilled cards (`cards/`) — the knowledge base
 
-16 compact security **flash-cards**, one concept each, covering the high-yield bug classes and
-methodology (IDOR/BOLA, authz/priv-esc, SQLi, JWT/auth, injection/RCE, SSRF, XSS, file-upload,
-Android/iOS, business-logic/CRUD, PII exposure, verb-tampering, CSRF/clickjacking, hardened-target
-methodology, scope/dedupe). Each card is a hand-distilled condensation of authoritative sources
-(OWASP WSTG / API Top 10 / Cheat Sheets, CWE, CVSS v3.1) — see **[REFERENCES.md](REFERENCES.md)**.
+28 compact security **flash-cards**, one concept each, covering the high-yield bug classes and
+methodology: IDOR/BOLA, authz/priv-esc, SQLi, JWT/auth, injection/RCE, SSTI, XXE, insecure
+deserialization, GraphQL, path-traversal/LFI, SSRF, XSS, CORS, OAuth/OIDC/SSO, file-upload,
+race conditions, open redirect, subdomain takeover, verb-tampering, CSRF/clickjacking, business-
+logic/CRUD, PII exposure, Android/iOS, recon & attack-surface mapping, hardened-target methodology,
+and scope/dedupe. Each card is a hand-distilled condensation of authoritative sources
+(OWASP WSTG / API Top 10 / Cheat Sheets, PortSwigger Web Security Academy, CWE, CVSS v3.1) —
+see **[REFERENCES.md](REFERENCES.md)**.
 
 **Why distilled, not raw docs:** small focused cards keep retrieval sharp and answers grounded —
 the model gets exactly the relevant concept instead of paragraphs of a 200-page guide. This
