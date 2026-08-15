@@ -254,7 +254,7 @@ def _self_test() -> int:
         print(f"[{status}] expect={expect:5s} got={d.verdict:5s}  {cmd}")
         if d.reasons:
             print(f"         reasons: {'; '.join(d.reasons)}")
-    print(f"\n[{'✓' if ok else '✗'}] scope_guard self-test {'passed' if ok else 'FAILED'}")
+    print(f"\n[{'+' if ok else 'x'}] scope_guard self-test {'passed' if ok else 'FAILED'}")
     return 0 if ok else 1
 
 

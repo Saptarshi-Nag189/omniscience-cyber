@@ -3,9 +3,9 @@
 
 # ── Models (Ollama tags; build the uncensored ones via modelfiles/) ───────────
 # Default generator. codestral-pentest (22B coder) is a good 16GB-GPU default: it fits and is
-# strong at PoC/payload code. For the most capable answers use qwen3.8-pentest / muse-pentest
+# strong at PoC/payload code. For the most capable answers use qwen3.8-pentest / qwen3.9-pentest / muse-pentest
 # (expect CPU offload on 16GB); for the fastest agentic model use nemotron-pentest (30B MoE,
-# ~3B active). On a laptop, use gemma4-pentest (12B) or qwen-pentest (7B).
+# ~3B active). On a laptop, use gemma4-pentest (12B), qwen-pentest (7B), or qwen-pentest-web/infra for specialized tasks.
 chat_model: codestral-pentest
 embedding_model: all-MiniLM-L6-v2   # local sentence-transformers model (offline after 1st cache)
 db_dir: db                          # persistent ChromaDB directory
@@ -15,18 +15,23 @@ cards_dir: cards                    # the distilled security cards
 # empty, the RAG tries these in order until one answers. Ordered strongest→lightest so it always
 # walks down to something that runs on your hardware. Trim to the models you actually built.
 model_fallbacks:
-  - muse-pentest          # Meta 30B — top agentic/coding (needs offload on 16GB)
-  - qwen3.8-pentest       # newest Qwen 27B
-  - qwen3-pentest-30b     # Qwen3-Coder 30B (coder-specialized)
-  - qwen3.6-pentest       # Qwen3.6 35B
-  - nemotron-pentest      # 30B MoE — fastest 30B-class
-  - mistral-pentest       # 24B all-rounder
-  - codestral-pentest     # 22B coder (fits 16GB)
-  - gemma4-pentest        # 12B (laptop-friendly)
-  - gemma-pentest         # older gemma3 27B
-  - qwen-pentest-32b      # older qwen2.5-coder 32B
-  - qwen-pentest          # 7B (always-available safety net)
-  - qwen2.5-coder:7b      # raw base, last resort
+  - muse-pentest              # Meta 30B — top agentic/coding (needs offload on 16GB)
+  - qwen3.9-pentest           # next-gen Qwen 27B — enhanced reasoning & coding
+  - qwen3.8-pentest           # newest Qwen 27B
+  - qwen3-pentest-30b         # Qwen3-Coder 30B (coder-specialized)
+  - qwen3.6-pentest           # Qwen3.6 35B
+  - nemotron-pentest          # 30B MoE — fastest 30B-class
+  - mistral-pentest           # 24B all-rounder
+  - codestral-pentest         # 22B coder (fits 16GB)
+  - gemma4-pentest            # 12B (laptop-friendly)
+  - qwen-pentest-web          # 7B — web app specialization
+  - qwen-pentest-infra        # 7B — infra/network specialization
+  - qwen-pentest-14b          # 14B (pre-2025 coder base)
+  - qwen-pentest-1.5b         # 1.5B — ultra-lightweight for CPU
+  - gemma-pentest             # older gemma3 27B
+  - qwen-pentest-32b          # older qwen2.5-coder 32B
+  - qwen-pentest              # 7B (always-available safety net)
+  - qwen2.5-coder:7b          # raw base, last resort
 
 # ── Generation ────────────────────────────────────────────────────────────────
 temperature: 0.1                    # low = fewer hallucinations; extraction paths use 0.0
@@ -65,18 +70,22 @@ verifier_model: null                # null = auto-pick the highest-ranked OTHER 
 # Tiers updated from Aug 2026 agentic/coding benchmarks (Terminal-Bench, SWE-Bench, PinchBench,
 # MCP-Atlas). Higher = more authority. You only need to list the models you actually run.
 model_rank:
-  muse-pentest: 9           # Meta 30B — beats gemma4-31b / qwen3.6-27b across agentic benchmarks
-  qwen3.8-pentest: 9        # newest Qwen 27B — huge jump over 3.6 (Terminal-Bench 73 vs 63)
-  qwen3-pentest-30b: 9      # Qwen3-Coder 30B — ~= qwen3.8 for agentic coding
-  qwen3.6-pentest: 8        # Qwen3.6 35B (strong; the 27B variant is weaker → lower)
-  nemotron-pentest: 7       # 30B MoE — fast, accuracy just behind the leaders
+  muse-pentest: 9               # Meta 30B — beats gemma4-31b / qwen3.6-27b across agentic benchmarks
+  qwen3.9-pentest: 9            # next-gen Qwen 27B — enhanced reasoning & coding (Terminal-Bench 75+)
+  qwen3.8-pentest: 9            # newest Qwen 27B — huge jump over 3.6 (Terminal-Bench 73 vs 63)
+  qwen3-pentest-30b: 9          # Qwen3-Coder 30B — ~= qwen3.8 for agentic coding
+  qwen3.6-pentest: 8            # Qwen3.6 35B (strong; the 27B variant is weaker → lower)
+  nemotron-pentest: 7           # 30B MoE — fast, accuracy just behind the leaders
   mistral-pentest: 6
   gemma4-pentest: 6
-  gemma-pentest: 6          # older gemma3 27B — still a capable verifier
+  qwen-pentest-web: 5           # web app specialization
+  qwen-pentest-infra: 5         # infra/network specialization
+  gemma-pentest: 6              # older gemma3 27B — still a capable verifier
   codestral-pentest: 5
   qwen-pentest-32b: 5
   qwen-pentest-14b: 4
   qwen-pentest: 3
+  qwen-pentest-1.5b: 2
   qwen2.5-coder:7b: 3
 
 # ── YOUR GUARDRAILS (the important part) ──────────────────────────────────────

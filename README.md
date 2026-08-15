@@ -64,6 +64,11 @@ You need [Ollama](https://ollama.com) and Python 3.10+. Then, copy-paste:
 pip install -r requirements.txt
 
 # 2. download a base model and wrap it with the tuned "don't refuse legit work" prompt
+# Choose a model size based on your hardware:
+#   - 1.5B: ollama pull qwen2.5-coder:1.5b   (CPU/4GB VRAM)
+#   - 7B:   ollama pull qwen2.5-coder:7b     (8-12GB VRAM)  
+#   - 14B:  ollama pull qwen2.5-coder:14b    (12-16GB VRAM)
+#   - 32B:  ollama pull qwen2.5-coder:32b    (24GB+ VRAM)
 ollama pull qwen2.5-coder:7b
 ollama create qwen-pentest -f modelfiles/qwen-pentest.Modelfile
 
@@ -197,6 +202,7 @@ your hardware can handle — `make models` skips any whose base isn't pulled. VR
 | Model | Base | ~Size | 16GB | Best for |
 |---|---|---|---|---|
 | `muse-pentest` | `muse-glimmer` | 30B | offload | **Top agentic/coding** — Meta 30B, beats gemma4-31b / qwen3.6-27b |
+| `qwen3.9-pentest` | `qwen3.9` | 27B | offload | **Next-gen Qwen** — enhanced reasoning, coding, agentic capabilities |
 | `qwen3.8-pentest` | `qwen3.8` | 27B | tight | Newest Qwen — big jump over 3.6, strong all-rounder |
 | `qwen3-pentest-30b` | `qwen3-coder:30b` | 30B | offload | Coder-specialized 30B — strongest raw payloads (≈ qwen3.8) |
 | `qwen3.6-pentest` | `qwen3.6:35b` | 35B | offload | Largest — deep agentic reasoning |
@@ -204,7 +210,10 @@ your hardware can handle — `make models` skips any whose base isn't pulled. VR
 | `mistral-pentest` | `mistral-small:24b` | 24B | tight | Balanced code + reasoning |
 | `codestral-pentest` | `codestral:22b` | 22B | **fits** | **Recommended 16GB default** — coder, fits comfortably |
 | `gemma4-pentest` | `gemma4:12b` | 12B | **fits** | Laptop-friendly reasoning / report writing |
-| `qwen-pentest-14b` | `qwen2.5-coder:14b` | 14B | **fits** | Optional small coder (the one pre-2025 base) |
+| `qwen-pentest-web` | `qwen2.5-coder:7b` | 7B | **fits** | **Web app specialization** — React/Node/Django, GraphQL, OAuth, CSP |
+| `qwen-pentest-infra` | `qwen2.5-coder:7b` | 7B | **fits** | **Infra/Network specialization** — AD, Cloud, Lateral movement |
+| `qwen-pentest-14b` | `qwen2.5-coder:14b` | 14B | **fits** | Optional small coder (pre-2025 base) |
+| `qwen-pentest-1.5b` | `qwen2.5-coder:1.5b` | 1.5B | **fits** | Ultra-lightweight for CPU/minimal GPU |
 | `qwen-pentest` · `qwen-pentest-32b` · `gemma-pentest` | qwen2.5 / gemma3 | 7B–32B | mixed | Original wrappers (kept) |
 
 Model ranking (which one the two-model verifier trusts to override which) is informed by
@@ -223,11 +232,11 @@ compliant model.
 Build only what your hardware runs well — you don't need all of them.
 
 - **16GB GPU (NVIDIA):** `codestral-pentest` is the default (fits comfortably). Add
-  `gemma4-pentest` (fast/light) and, if you accept some CPU offload, `qwen3.8-pentest` or
-  `nemotron-pentest` for higher-end answers.
-- **24GB+ GPU:** `muse-pentest`, `qwen3.8-pentest`, and `qwen3-pentest-30b` all run comfortably —
+  `gemma4-pentest` (fast/light), `qwen-pentest-web` or `qwen-pentest-infra` for specialized tasks, and if you accept some CPU offload, `qwen3.8-pentest`, `qwen3.9-pentest` or `nemotron-pentest` for higher-end answers.
+- **24GB+ GPU:** `muse-pentest`, `qwen3.8-pentest`, `qwen3.9-pentest`, and `qwen3-pentest-30b` all run comfortably —
   make one of them your `chat_model`.
-- **Laptop / ≤12GB:** `gemma4-pentest` (~7.6GB) or `qwen-pentest` (7B).
+- **Laptop / ≤12GB:** `gemma4-pentest` (~7.6GB), `qwen-pentest` (7B), `qwen-pentest-web` or `qwen-pentest-infra` for specialized tasks.
+- **Ultra-lightweight / CPU only:** `qwen-pentest-1.5b` (1.5B) runs on CPU or 4GB VRAM.
 - **Apple Silicon:** use the `-mlx` builds (table below); with 32GB+ unified memory the 30B MoE
   models (`nemotron`, `qwen3.6-35b`) are excellent and fast.
 
@@ -239,6 +248,7 @@ modelfile to the MLX tag:
 | Wrapper | Default `FROM` | Apple Silicon `FROM` | MLX size |
 |---|---|---|---|
 | `muse-pentest` | `muse-glimmer` | `muse-glimmer:30b-mlx` | ~21GB |
+| `qwen3.9-pentest` | `qwen3.9` | `qwen3.9:27b-mlx` | ~18GB |
 | `qwen3.8-pentest` | `qwen3.8` | `qwen3.8:27b-mlx` | ~18GB |
 | `qwen3.6-pentest` | `qwen3.6:35b` | `qwen3.6:35b-mlx` | ~22GB |
 | `nemotron-pentest` | `nemotron-3.5-lightning` | `nemotron-3.5-lightning:30b-a3b-mlx` | ~23GB |

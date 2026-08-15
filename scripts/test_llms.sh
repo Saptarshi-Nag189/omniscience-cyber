@@ -5,9 +5,9 @@ set -uo pipefail
 
 # Test whichever *-pentest models you built (missing ones are skipped automatically below).
 # Ordered newest/strongest first. Trim to taste.
-MODELS=("muse-pentest" "qwen3.8-pentest" "qwen3-pentest-30b" "qwen3.6-pentest" \
+MODELS=("qwen3.9-pentest" "muse-pentest" "qwen3.8-pentest" "qwen3-pentest-30b" "qwen3.6-pentest" \
         "nemotron-pentest" "mistral-pentest" "codestral-pentest" "gemma4-pentest" \
-        "qwen-pentest-14b" "qwen-pentest-32b" "gemma-pentest" "qwen-pentest")
+        "qwen-pentest-web" "qwen-pentest-infra" "qwen-pentest-14b" "qwen-pentest-32b" "gemma-pentest" "qwen-pentest" "qwen-pentest-1.5b")
 
 # Prompts that a censored model refuses but an authorized-pentest assistant should answer.
 declare -A PROMPTS=(
