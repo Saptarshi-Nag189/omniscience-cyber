@@ -1,0 +1,62 @@
+# Build parsers.py by writing in parts
+import os
+
+# First, write the header
+with open('C:/temp/omniscience-cyber/rag/parsers.py', 'w') as f:
+    f.write('''from __future__ import annotations
+
+import json
+import re
+import xml.etree.ElementTree as ET
+from typing import Any, Dict, List, Optional
+
+from .models import Finding, Host, Port, ScanResult, Severity, Service
+
+def parse_nmap_xml(xml_str: str):
+    hosts = []
+    try:
+        root = ET.fromstring(xml_str)
+    except ET.ParseError as e:
+        return [Host(address="", extra={"parse_error": str(e)})]
+    for host_elem in root.findall("host"):
+        addr_elem = host_elem.find("address")
+        address = addr_elem.get("addr", "") if addr_elem is not None else ""
+        hostnames = []
+        for hn in host_elem.findall("hostnames/hostname"):
+            hostnames.append(hn.get("name", ""))
+        ports = []
+        for port_elem in root.findall("ports/port"):
+            port_id = int(port_elem.get("portid", "0"))
+            protocol = port_elem.get("protocol", "tcp")
+            state_elem = port_elem.find("state")
+            state = state_elem.get("state", "unknown") if state_elem is not None else "unknown"
+            service_elem = port_elem.find("service")
+            service = None
+            if service_elem is not None:
+                service = Service(
+                    name=service_elem.get("name", ""),
+                    product=service_elem.get("product", ""),
+                    version=service_elem.get("version", ""),
+                    extrainfo=service_elem.get("extrainfo", ""),
+                    cpe=[cpe.text for cpe in service_elem.findall("cpe") if cpe.text],
+                )
+            scripts = []
+            for script in port_elem.findall("script"):
+                scripts.append({"id": script.get("id", ""), "output": script.get("output", "")})
+            ports.append(Port(number=port_id, protocol=protocol, state=state, service=service, scripts=scripts))
+        os_match = None
+        os_elem = host_elem.find("os")
+        if os_elem is not None:
+            osmatch = os_elem.find("osmatch")
+            if osmatch is not None:
+                os_match = {"name": osmatch.get("name", ""), "accuracy": osmatch.get("accuracy", "")}
+        distance = None
+        dist_elem = host_elem.find("distance")
+        if dist_elem is not None:
+            distance = int(dist_elem.get("value", "0"))
+        hosts.append(Host(address=address, hostnames=hostnames, ports=ports, os=os_match, distance=distance))
+    return hosts
+
+''')
+
+print("Part 1 written")
