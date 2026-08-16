@@ -1,345 +1,439 @@
 # omniscience-cyber
 
-**An offline AI assistant for authorized penetration testing — it answers with working payloads
-and honest scoring instead of refusing or making things up, and it runs entirely on your own
-machine.** No cloud, no API keys, nothing leaves the box.
+**An offline, autonomous AI penetration testing orchestrator and cybersecurity RAG framework — executing dynamic campaign DAGs, enforcing strict Rules of Engagement (RoE), and delivering verified findings with tamper-evident cryptographic audit trails.**
 
-> ⚠️ **Authorized use only.** For lawful security work — pentests under a signed engagement,
-> bug-bounty programs within scope, CTFs, and defensive research. It produces real exploit code
-> because a vulnerability report needs a working proof-of-concept. You are responsible for only
-> testing systems you have explicit written permission to assess.
+Runs 100% locally on your own machine. No cloud telemetry, no API keys, and nothing leaves the environment.
+
+> [!WARNING]
+> **Authorized use only.** This software is designed exclusively for lawful security assessments — authorized pentests under a signed Rules of Engagement (RoE), bug-bounty programs within explicit scope, CTFs, and defensive security research. It produces real exploit payloads, executes security tools, and automates attack surface discovery. You are strictly responsible for ensuring you have written authorization before testing any target.
 
 ---
 
-## Why it exists
+## Architecture Overview
 
-Generic chatbots are the wrong tool for offensive security twice over:
+`omniscience-cyber` brings together local language models, a knowledge retrieval base of 34 security cards, dynamic directed acyclic graph (DAG) campaign planning, automated tool parsers, SQLite-backed deduplication, and a cryptographic SHA-256 hash-chained audit trail into a unified offensive security orchestrator.
 
-1. **They refuse.** Ask for a working SQLi string or a JWT-forgery script and you get a lecture —
-   even for a sanctioned pentest where that proof-of-concept *is* the deliverable.
-2. **They make things up.** The ones that do answer will confidently invent a CVSS score, a
-   payload, or an "is this in scope?" call — and in security work a made-up fact costs you points
-   or causes real harm.
-
-omniscience-cyber fixes both, offline: local models tuned not to refuse legitimate work, answers
-**grounded in a built-in library of hand-written security cards** (so they're cited, not guessed),
-and a **second model that double-checks** the first for invented scores or claims.
-
-## How it works
-
-You ask a question. The tool finds the most relevant security cards from its local library, hands
-them to a local AI model along with your question, and (optionally) has a second model check the
-answer against those same cards before you trust it.
+### Multi-Agent Orchestration Architecture
 
 ```mermaid
 flowchart TD
-    SHELL["Shell (REPL)"] --> PLANNER["Planner (DAG/Plan)"]
-    PLANNER --> EXECUTOR["Executor (Executor/Parser)"]
-    
-    SHELL --> GUARD["Scope Guard (RoE Enforcement)"]
-    PLANNER --> GUARD
+    subgraph UI["Interfaces & Control Surface"]
+        SHELL["Interactive REPL Shell<br/><code>rag.shell (OmniscienceShell)</code>"]
+        API["REST API Server<br/><code>rag.api (FastAPI / Starlette)</code>"]
+        CLI["CLI Command Pipeline<br/><code>rag.rag_core</code>"]
+    end
+
+    subgraph PLANNING["Campaign Orchestration & Planning"]
+        TEMPLATES["YAML Campaign Templates<br/><code>templates/*.yaml</code>"]
+        PLANNER["DAG Campaign Planner<br/><code>rag.planner</code>"]
+        STATE["Campaign State Store<br/><code>campaigns/*.json</code>"]
+    end
+
+    subgraph SAFETY["Safety & Governance"]
+        GUARD["Scope Guard (RoE Enforcement)<br/><code>rag.scope_guard</code>"]
+        CONFIG["Security Policy Config<br/><code>config.yaml</code>"]
+    end
+
+    subgraph EXECUTION["Tool Execution Engine"]
+        EXECUTOR["Async Kali Executor<br/><code>rag.executor (Subprocess/AsyncIO)</code>"]
+        DRYRUN["Dry-Run Simulator<br/><code>--dry-run (Zero Live Packets)</code>"]
+        TOOLS["Live Kali Toolset<br/>(Nmap, Nuclei, Ffuf, Masscan, Hydra, etc.)"]
+    end
+
+    subgraph KNOWLEDGE["Grounded Knowledge Base"]
+        CARDS["34 Security Cards<br/><code>cards/*.md</code>"]
+        RAG["Hybrid Vector & Keyword RAG<br/><code>rag.rag_core</code>"]
+        VERIFY["Two-Model Verifier<br/><code>rag.verify</code>"]
+        OLLAMA["Local Ollama Models<br/>(Qwen, Codestral, Muse, Nemotron)"]
+    end
+
+    subgraph STORAGE["Data Store, Audit & Reporting"]
+        PARSER["Structured Tool Parsers<br/><code>rag.parsers (XML / JSON / RegEx)</code>"]
+        FINDINGS["SQLite Finding Store<br/><code>findings.db (Deduplication)</code>"]
+        AUDIT["Cryptographic Audit Trail<br/><code>SHA-256 Linked Hash Chain</code>"]
+        REPORT["Report Generator<br/><code>rag.report (Markdown / JSON)</code>"]
+    end
+
+    SHELL --> PLANNER
+    API --> PLANNER
+    CLI --> RAG
+    SHELL --> RAG
+    TEMPLATES --> PLANNER
+    PLANNER --> STATE
+    PLANNER --> EXECUTOR
+
+    CONFIG --> GUARD
     EXECUTOR --> GUARD
-    
-    GUARD --> FINDINGS["Findings Store"]
-    GUARD --> AUDIT["Audit Trail"]
-    GUARD --> REPORT["Report Generator (MD/HTML/JSON)"]
+    GUARD -->|Permitted| TOOLS
+    GUARD -->|Blocked| AUDIT
+    DRYRUN -.->|Simulate Results| PARSER
+    TOOLS --> PARSER
+
+    PARSER --> FINDINGS
+    EXECUTOR --> AUDIT
+    SHELL --> AUDIT
+    FINDINGS --> REPORT
+    AUDIT --> REPORT
+
+    RAG --> CARDS
+    RAG --> OLLAMA
+    RAG --> VERIFY
 ```
 
-Nothing in that diagram touches the internet after the first-time setup.
+---
 
-## What you can ask it for
+## Campaign DAG Execution Workflow
 
-Four modes, one library of cards behind all of them:
+Security assessments require dynamic tool chaining where downstream tasks depend on the output of upstream discovery (e.g., discovering open web ports with Nmap before launching Nuclei or Ffuf). `omniscience-cyber` models campaigns as Directed Acyclic Graphs (DAGs) defined in YAML templates with variable interpolation and conditional execution.
 
-| You want… | Command | What you get |
+```mermaid
+flowchart TD
+    START(["Start Campaign: web_recon<br/>Target: staging.example.com"]) --> S1
+
+    subgraph S1["Step 1: Port & Service Reconnaissance"]
+        NMAP["tool: nmap<br/>args: -sV -T2 -oX - {{target}}"]
+        PARSENMAP["parser: nmap_xml<br/>extract open ports, services, banners"]
+        NMAP --> PARSENMAP
+    end
+
+    PARSENMAP --> CTX["Build Dynamic Execution Context<br/>{{open_ports}} = [80, 443, 8080]<br/>{{target}} = staging.example.com"]
+
+    CTX --> COND{"Evaluate Step Conditions<br/><code>port 80 in open_ports or port 443 in open_ports</code>"}
+
+    COND -->|Condition Satisfied| BRANCH["Resolve Dependencies & Execute Steps"]
+    COND -->|Condition Unmet| SKIP["Step Skipped (State: SKIPPED)"]
+
+    subgraph S2["Step 2: Vulnerability & CVE Scanning"]
+        NUCLEI["tool: nuclei<br/>args: -u {{target}} -json -tags cve -rl 20"]
+        PARSENUCLEI["parser: nuclei_json<br/>extract CVEs, severity, PoCs, HTTP evidence"]
+        NUCLEI --> PARSENUCLEI
+    end
+
+    subgraph S3["Step 3: Web Content & Directory Fuzzing"]
+        FFUF["tool: ffuf<br/>args: -u {{target}}/FUZZ -w common.txt -of json -rate 50"]
+        PARSEFFUF["parser: ffuf_json<br/>extract paths, status codes, response sizes"]
+        FFUF --> PARSEFFUF
+    end
+
+    BRANCH --> S2
+    BRANCH --> S3
+
+    PARSENUCLEI --> DEDUP["SQLite Finding Store (findings.db)<br/>Deduplicate & Fingerprint Findings"]
+    PARSEFFUF --> DEDUP
+
+    DEDUP --> HASH["Tamper-Evident SHA-256 Audit Log<br/>Cryptographic Block Chaining"]
+    HASH --> REP(["Generate Engagement Report<br/>(Markdown / JSON / HTML)"])
+```
+
+### Context Variable Interpolation
+
+Campaign steps can dynamically reference runtime variables populated by earlier steps:
+
+| Variable | Description | Source |
 |---|---|---|
-| A grounded, cited answer | `ask` | An explanation with a real CVSS score, citing which card it used |
-| A ready-to-run tool command | `tool` | The exact Kali command (ffuf, sqlmap, nmap…), safe to paste into a shell |
-| How to **fix** a bug you found | `harden` | Prioritized remediation: root cause → fix → interim control → how to re-test |
-| A safety double-check | `verify` | A second model confirms the answer or flags a made-up score/claim |
+| `{{target}}` | Primary target host, domain, or IP | Campaign definition or `target` command |
+| `{{open_ports}}` | Comma-separated list of discovered open ports | Extracted from `nmap_xml` or `masscan_json` parser |
+| `{{web_ports}}` | Filtered HTTP/HTTPS ports (80, 443, 8080, 8443) | Extracted from port scan results |
+| `{{username}}` | Username for authenticated assessments | User parameters or credential store |
+| `{{password}}` | Password or hash for authenticated assessments | User parameters or credential store |
+| `{{domain}}` | Active Directory domain name / realm | Extracted during domain enumeration |
 
-## Set it up (first time only)
+---
 
-You need [Ollama](https://ollama.com) and Python 3.10+. Then, copy-paste:
+## Interactive REPL & Campaign Commands
+
+The interactive shell (`rag/shell.py`) provides an autonomous command-and-control REPL for managing targets, DAG planning, stepped execution, finding triage, and RAG-grounded advisory.
+
+### Launching the Shell
 
 ```bash
-# 1. install the Python dependencies
-pip install -r requirements.txt
+# Launch interactive REPL in safe dry-run mode (no live tool execution)
+python -m rag.shell --dry-run
 
-# 2. download a base model and wrap it with the tuned "don't refuse legit work" prompt
-# Choose a model size based on your hardware:
-#   - 1.5B: ollama pull qwen2.5-coder:1.5b   (CPU/4GB VRAM)
-#   - 7B:   ollama pull qwen2.5-coder:7b     (8-12GB VRAM)  
-#   - 14B:  ollama pull qwen2.5-coder:14b    (12-16GB VRAM)
-#   - 32B:  ollama pull qwen2.5-coder:32b    (24GB+ VRAM)
-ollama pull qwen2.5-coder:7b
-ollama create qwen-pentest -f modelfiles/qwen-pentest.Modelfile
+# Launch targeting a specific host with custom template
+python rag/shell.py --target staging.example.com --template web_recon
 
-# 3. copy the example config, then edit it to add your authorized targets
-cp config.example.yaml config.yaml
-#    open config.yaml and set guardrails.in_scope_hosts to the hosts you're allowed to test
-
-# 4. load the security cards into the local search index (takes a few seconds)
-python rag/rag_core.py ingest cards
+# Execute non-interactive automated campaign
+python -m rag.shell --run 10.10.10.5 --template infra_recon --dry-run
 ```
 
-That's it — you're ready. (On a GPU box you can also build the bigger models: run
-`make models`, or see `modelfiles/`.)
+### Command Reference
 
-## Use it from the command line
+| Command | Arguments | Description |
+|---|---|---|
+| `target` | `[host]` | Set or inspect the active target host/IP/URL. |
+| `plan` | `[target] [template]` | Compile and display a campaign DAG without running any steps. |
+| `run` | `[target\|id] [template]` | Execute a new or existing campaign end-to-end (respects `--dry-run`). |
+| `step` | `[campaign_id]` | Execute exactly one ready step in the campaign DAG and pause. |
+| `status` | `[campaign_id]` | Display step-by-step progress, states (`PENDING`, `COMPLETED`, `BLOCKED`), and summary statistics. |
+| `findings` | `[id] [severity]` | List deduplicated findings filtered by severity (`critical`, `high`, `medium`, `low`, `info`). |
+| `export` | `[id] <filename>` | Export an executive report to Markdown (`.md`) or structured JSON (`.json`). |
+| `audit` | `[campaign_id]` | Verify the cryptographic integrity of the SHA-256 hash chain and inspect recent events. |
+| `ask` | `<query>` | Query the local grounded RAG knowledge base (returns cited security cards & CVSS scores). |
+| `tool` | `<query>` | Generate safe, syntax-checked Kali commands verified against Scope Guard. |
+| `harden` | `<query>` | Generate defensive remediation plans (root cause → fix → interim control → retest). |
+| `list` | — | List all stored campaigns, targets, execution states, and finding counts. |
+| `show` | `[campaign_id]` | Show detailed DAG step hierarchy, dependencies, conditions, and commands. |
+| `use` | `<campaign_id>` | Switch the currently active campaign context. |
+| `pause` | `[campaign_id]` | Pause an active campaign execution. |
+| `resume` | `[campaign_id]` | Resume a paused or interrupted campaign. |
+| `help` | `[command]` | View inline documentation and command help. |
+| `exit` / `quit` | — | Safely exit the REPL shell (handles `Ctrl+D` / `EOF` cleanly). |
 
-Copy-paste any of these:
+---
 
-```bash
-# Ask a question — get a grounded answer with a real CVSS score and the card it used
-python rag/rag_core.py ask "how do I test for IDOR and score it?"
+## Dynamic YAML Templates
 
-# Get a ready-to-run tool command (safe to paste into a shell)
-python rag/rag_core.py tool "directory brute force the target with ffuf"
+Campaign templates are stored in `templates/*.yaml` and define multi-step attack graphs.
 
-# Ask how to FIX something you found (defensive / blue-team mode)
-python rag/rag_core.py harden "the login page reflects the 'next' parameter into a redirect"
+### Template Anatomy
 
-# Sanity-check that the two-model verifier works (Ollama must be running)
-python rag/verify.py --self-test
+```yaml
+name: Web Application Reconnaissance
+description: "Full web app recon: nmap -> nuclei -> ffuf"
+steps:
+  - id: recon_nmap
+    tool: nmap
+    args: ["-sV", "-T2", "-oX", "-", "{{target}}"]
+    parser: nmap_xml
+    description: "Service detection on target"
+    timeout: 300
+
+  - id: recon_nuclei
+    tool: nuclei
+    args: ["-u", "{{target}}", "-json", "-tags", "cve", "-rl", "20"]
+    parser: nuclei_json
+    description: "CVE/misconfiguration scan"
+    timeout: 600
+    depends_on: ["recon_nmap"]
+
+  - id: recon_ffuf
+    tool: ffuf
+    args: ["-u", "{{target}}/FUZZ", "-w", "/usr/share/seclists/Discovery/Web-Content/common.txt", "-of", "json", "-rate", "50"]
+    parser: ffuf_json
+    description: "Directory brute force"
+    timeout: 600
+    depends_on: ["recon_nmap"]
+    condition: "port 80 in open_ports or port 443 in open_ports"
 ```
 
-Prefer the safe wrapper for tool commands — it shows you the command and waits for you to
-confirm before running anything (it never blind-pipes to your shell):
+### Built-in Templates
 
-```bash
-scripts/kali_run.sh "sqli test the login parameter with sqlmap"
+| Template | Path | Workflow & Tools |
+|---|---|---|
+| `web_recon` | `templates/web_recon.yaml` | Service discovery (`nmap`) → CVE scan (`nuclei`) + Directory discovery (`ffuf`) |
+| `infra_recon` | `templates/infra_recon.yaml` | Fast port scan (`masscan`) → Service detection (`nmap`) → Network CVE scan (`nuclei`) |
+| `ad_enum` | `templates/ad_enum.yaml` | AD Port scan (`nmap`) → LDAP Enum (`enum4linux-ng`) → Attack path mapping (`bloodhound`) |
+| `mobile_recon` | `templates/mobile_recon.yaml` | APK decompilation (`apktool`) → Static security analysis (`mobsf`) |
+
+---
+
+## Scope Guard & Rules of Engagement (RoE)
+
+The **Scope Guard** (`rag/scope_guard.py`) is an active safety firewall that inspects every single tool command **before** execution.
+
+```mermaid
+flowchart TD
+    CMD["Proposed Kali Command / DAG Step"] --> SG{"Scope Guard Inspection"}
+    SG -->|Verify Target Host / IP| IP_CHECK{"In-Scope Host / CIDR?<br/><code>config.yaml: in_scope_hosts</code>"}
+    IP_CHECK -->|Out of Scope| BLOCK_HOST["🚫 BLOCKED: out_of_scope_target"]
+    IP_CHECK -->|In Scope| RULE_CHECK{"Check Dangerous Flags?<br/>(DoS, --dump-all, unthrottled)"}
+    RULE_CHECK -->|Pattern Matched| BLOCK_RULE["🚫 BLOCKED: forbidden_action_flag"]
+    RULE_CHECK -->|Clean| ALLOW["✅ PERMITTED: Dispatched to Executor"]
+    BLOCK_HOST --> AUDIT["Logged to SHA-256 Audit Trail"]
+    BLOCK_RULE --> AUDIT
+    ALLOW --> AUDIT
 ```
 
-## Use it from Kali or another machine (the HTTP API)
+### Enforced Guardrails
 
-Start a small local web server so other tools can talk to it. By default it only listens on your
-own machine:
+1. **Target Boundary Enforcement**:
+   - Subnet CIDR matching (`10.10.0.0/24`, `192.168.1.0/24`).
+   - Domain and wildcard subdomain matching (`*.staging.example.com`).
+   - Rejects unlisted IP addresses and foreign hostnames.
+2. **Forbidden Attack Patterns**:
+   - **Denial of Service (DoS)**: Blocks `--flood`, `nmap -T5`, unthrottled concurrency flags.
+   - **Bulk Data Theft / Exfiltration**: Blocks `sqlmap --dump-all`.
+   - **Destructive Database Modification**: Blocks `--sql-query "DROP TABLE..."`, `--os-pwn` without interactive confirmation.
+   - **Unthrottled Brute Force**: Enforces rate limiting on Hydra and Ffuf.
+
+---
+
+## Cryptographic Tamper-Evident Audit Trail
+
+All operations (DAG planning, step execution, tool commands, Scope Guard verdicts, and finding detections) are committed to an append-only cryptographic ledger (`rag/audit.py`).
+
+```
+Entry 0 (Genesis):  Hash = SHA256(0000000000000000... + Entry_0_JSON)
+Entry 1:            Hash = SHA256(Entry_0_Hash       + Entry_1_JSON)
+Entry 2:            Hash = SHA256(Entry_1_Hash       + Entry_2_JSON)
+...
+```
+
+- **Hash Algorithm**: SHA-256 with genesis seed `0000000000000000000000000000000000000000000000000000000000000000`.
+- **Integrity Check**: The `audit` command and `verify_chain()` API traverse the log to detect modified, deleted, or inserted records.
+- **Forensic Deliverables**: Audit logs are embedded directly into generated reports for defensible compliance proof.
+
+---
+
+## The Knowledge Base — Security Cards (`cards/`)
+
+Answers and tool commands are grounded in **34 hand-written security cards** curated from OWASP Top 10, PortSwigger Web Security Academy, CWE, and CVSS v3.1 standards.
+
+| Category | Card Files | Key Topics Covered |
+|---|---|---|
+| **Web Application Security** | `01_idor_bola.md`, `03_sqli.md`, `04_jwt_session_auth.md`, `12_xss_client_injection.md`, `14_file_upload.md`, `15_ssrf.md`, `17_csrf_clickjacking.md`, `18_ssti.md`, `19_xxe.md`, `20_insecure_deserialization.md`, `21_graphql.md`, `22_path_traversal_lfi.md`, `23_cors_misconfig.md`, `24_oauth_oidc.md`, `26_open_redirect.md`, `29_http_request_smuggling.md`, `30_nosql_injection.md` | BOLA/IDOR, Blind SQLi, JWT Forgery, Stored XSS, SSRF, Polyglot Payloads, GraphQL Introspection, Path Traversal, CORS Origin reflection, OAuth token hijacking, HTTP Desync. |
+| **Authentication & AuthZ** | `02_authz_privesc.md`, `07_business_logic_crud.md`, `16_verb_tampering_authz_matrix.md`, `25_race_conditions.md` | Horizontal/Vertical Privilege Escalation, CRUD workflow bypass, HTTP Verb Tampering (HEAD/PUT bypass), Limit-overrun race conditions. |
+| **Infrastructure & Network** | `05_injection_rce.md`, `13_kali_tool_playbook.md`, `28_recon_attack_surface.md`, `31_cloud_iam_misconfig.md`, `32_active_directory.md`, `33_network_tls.md` | Command Injection, Kali Tool syntax, Passive/Active Recon, AWS/GCP IAM privilege escalation, Kerberoasting, AS-REP roasting, DCSync, TLS cipher suites. |
+| **Mobile & Client** | `06_android_static.md`, `09_ios_mobile.md`, `08_pii_transport_client.md` | Android APK reverse engineering, iOS plist/Keychain leakage, Insecure Data Storage, PII logging. |
+| **Methodology & Hardening** | `10_scope_methodology_dedupe.md`, `11_hardened_targets.md`, `27_subdomain_takeover.md`, `34_hardening_remediation.md` | Assessment methodology, WAF evasion, DNS dangling records, Prioritized blue-team remediation guides. |
+
+---
+
+## AI Models Catalog (`modelfiles/`)
+
+`omniscience-cyber` uses local Ollama models wrapped with a specialized system prompt that eliminates false refusals while maintaining factual grounding and CVSS accuracy.
+
+| Model Tag | Base Architecture | Size | 16GB GPU Status | Recommended Use Case |
+|---|---|---|---|---|
+| `muse-pentest` | Meta `muse-glimmer` | 30B | CPU Offload | **Top agentic/reasoning** — complex multi-step exploitation & analysis |
+| `qwen3.9-pentest` | `qwen3.9` | 27B | CPU Offload | **Next-gen Qwen** — deep reasoning, coding, and autonomous DAG planning |
+| `qwen3.8-pentest` | `qwen3.8` | 27B | Tight VRAM | High-performance all-rounder with strong PoC generation |
+| `qwen3-pentest-30b` | `qwen3-coder:30b` | 30B | CPU Offload | Specialized exploit coding & script generation |
+| `nemotron-pentest` | `nemotron-3.5-lightning` | 30B MoE | CPU Offload | **Fastest 30B class** (~3B active parameters) — rapid command generation |
+| `codestral-pentest` | `codestral:22b` | 22B | **Fits Comfortably** | **Recommended default for 16GB VRAM** — balanced payload coding |
+| `gemma4-pentest` | `gemma4:12b` | 12B | **Fits Comfortably** | **Laptop & edge devices** — fast reasoning and report summarization |
+| `qwen-pentest-web` | `qwen2.5-coder:7b` | 7B | **Fits Comfortably** | Web application specialization (React, GraphQL, OAuth, Node, Django) |
+| `qwen-pentest-infra` | `qwen2.5-coder:7b` | 7B | **Fits Comfortably** | Network & AD specialization (Kerberos, Lateral Movement, Cloud IAM) |
+| `qwen-pentest-1.5b` | `qwen2.5-coder:1.5b` | 1.5B | **Fits Comfortably** | Ultra-lightweight CPU-only environments |
+
+### Apple Silicon (MLX) Optimization
+
+On Apple Silicon with unified memory, use the corresponding MLX builds:
+
+| Wrapper Tag | MLX Base Model | Footprint |
+|---|---|---|
+| `muse-pentest` | `muse-glimmer:30b-mlx` | ~21 GB |
+| `qwen3.9-pentest` | `qwen3.9:27b-mlx` | ~18 GB |
+| `qwen3.8-pentest` | `qwen3.8:27b-mlx` | ~18 GB |
+| `nemotron-pentest` | `nemotron-3.5-lightning:30b-a3b-mlx` | ~23 GB |
+| `gemma4-pentest` | `gemma4:12b-mlx` | ~7.7 GB |
+
+---
+
+## HTTP REST API Server
+
+For multi-host setups (e.g. running the AI model on a GPU workstation while Kali runs on a lightweight laptop), start the REST API:
 
 ```bash
+# Start on loopback (default port 8600)
 python rag/api.py --host 127.0.0.1 --port 8600
-```
 
-Then, from another terminal, copy-paste:
-
-```bash
-# is it up?
-curl -s localhost:8600/health
-
-# ask a question
-curl -s localhost:8600/ask -d '{"q":"how do I test for IDOR and score it?"}'
-
-# ask, and have the second model verify the answer
-curl -s localhost:8600/ask -d '{"q":"what is the CVSS for reflected XSS?","verify":true}'
-
-# get a ready-to-run command (plain text, one command per line)
-curl -s 'localhost:8600/tool?task=directory+brute+force+with+ffuf'
-
-# ask how to fix a finding (blue-team mode)
-curl -s localhost:8600/harden -d '{"q":"TLS 1.0 and RC4 are enabled on the login host"}'
-```
-
-`/ask` and `/harden` reply with JSON: `answer`, `model` (which model answered), `cards` (the
-sources it cited), `citations` (each card with a relevance score), and — if you asked — `verdict`
-(✅ VERIFIED or ⚠️ FLAGGED).
-
-### Sharing it with teammates (turn on a password)
-
-The API can generate real attack commands, so if you open it to your network you **must** set a
-token first — otherwise it refuses to start. Copy-paste:
-
-```bash
-# pick a random token and start the server on the LAN
+# Start on LAN with token authentication (mandatory for non-loopback)
 export OMNISCIENCE_API_TOKEN=$(openssl rand -hex 16)
 python rag/api.py --host 0.0.0.0 --port 8600
+```
 
-# teammates include the token on every request
+### API Endpoints
+
+- `GET /health` — Service health and loaded model status.
+- `POST /ask` — Grounded security questions with card citations and optional verification.
+- `GET /tool?task=...` — Generate syntax-checked Kali commands.
+- `POST /harden` — Generate defensive hardening recommendations.
+
+```bash
+# Query the API
 curl -s -H "Authorization: Bearer $OMNISCIENCE_API_TOKEN" \
-     localhost:8600/ask -d '{"q":"how do I test for IDOR?"}'
+     http://localhost:8600/ask \
+     -d '{"q":"How do I test for IDOR on /api/v1/users/{id} and calculate its CVSS?"}'
 ```
 
-Other built-in safety: only `/health` is open without the token, request bodies are size-capped,
-and every request is written to an append-only log (`logs/audit.jsonl`, git-ignored) so you have a
-record of what was asked during an engagement. Disable the log with `audit_log: false` in your
-config.
+---
 
-## Staying in scope — the built-in guardrail
+## Pytest Testing & Sandbox Verification
 
-Telling a model "stay in scope" is not a control. `rag/scope_guard.py` is the real one: every
-command the `tool` mode produces is checked **before** you can run it, and anything that breaks
-your rules of engagement is blocked (turned into a `# BLOCKED: reason` line that a shell safely
-skips).
-
-```mermaid
-flowchart TD
-    T["Task: 'brute-force directories with ffuf'"] --> CORE["rag_core — tool mode"]
-    CORE --> GEN["model writes the command"]
-    GEN --> GUARD{"scope_guard inspects it"}
-    GUARD -->|"in scope + safe"| RUN["command shown — ready to run"]
-    GUARD -->|"out of scope / DoS / bulk data theft"| BLOCK["# BLOCKED: reason<br/>(won't run)"]
-```
-
-It blocks two things, using the `in_scope_hosts` and `forbid` lists from your `config.yaml`:
-
-- **Out-of-scope targets** — any host/IP not on your `in_scope_hosts` list (it understands exact
-  hosts, subdomains, and ranges like `10.10.0.0/24`). If you haven't set a scope list yet, it
-  *warns* instead of blocking.
-- **Dangerous actions** — denial-of-service flags (`--flood`, `nmap -T5`), bulk data theft
-  (`sqlmap --dump-all`), unthrottled brute force (`hydra` with no limit), and similar.
-
-Try it (no AI model needed for this part):
+The complete test suite runs in sandbox mode without requiring live Kali binaries or active network connections.
 
 ```bash
-make test-guard
-python rag/scope_guard.py "sqlmap -u https://prod.example.com/x?id=1 --dump-all"
-# verdict: block  →  # BLOCKED: bulk_real_pii_exfiltration: sqlmap --dump-all ...
+# Run the entire test suite (118+ unit and integration tests)
+pytest tests/ -v
+
+# Run specific subsystem tests
+pytest tests/test_shell.py -v         # REPL & command handlers
+pytest tests/test_planner.py -v       # DAG planning & variable interpolation
+pytest tests/test_executor.py -v      # Async execution & timeout handling
+pytest tests/test_parsers.py -v       # Tool output parsers (Nmap, Nuclei, Ffuf, Masscan)
+pytest tests/test_findings.py -v      # SQLite store & deduplication
+pytest tests/test_audit.py -v         # SHA-256 hash chain & tampering detection
+pytest tests/test_scope_guard.py -v   # RoE validation & flag blocking
+pytest tests/test_report.py -v        # Markdown & JSON report generation
 ```
 
-## The AI models (`modelfiles/`)
+---
 
-Each model is the latest open weights wrapped with the **same tuned no-refuse system prompt** and a
-**per-model inference setup** (sampling tuned to how that family runs best). Build only the ones
-your hardware can handle — `make models` skips any whose base isn't pulled. VRAM notes assume a
-16GB GPU; "offload" means it runs but spills to CPU/RAM (slower).
+## First-Time Setup
 
-| Model | Base | ~Size | 16GB | Best for |
-|---|---|---|---|---|
-| `muse-pentest` | `muse-glimmer` | 30B | offload | **Top agentic/coding** — Meta 30B, beats gemma4-31b / qwen3.6-27b |
-| `qwen3.9-pentest` | `qwen3.9` | 27B | offload | **Next-gen Qwen** — enhanced reasoning, coding, agentic capabilities |
-| `qwen3.8-pentest` | `qwen3.8` | 27B | tight | Newest Qwen — big jump over 3.6, strong all-rounder |
-| `qwen3-pentest-30b` | `qwen3-coder:30b` | 30B | offload | Coder-specialized 30B — strongest raw payloads (≈ qwen3.8) |
-| `qwen3.6-pentest` | `qwen3.6:35b` | 35B | offload | Largest — deep agentic reasoning |
-| `nemotron-pentest` | `nemotron-3.5-lightning` | 30B MoE | offload | **Fastest 30B** (~3B active) — quick agentic work |
-| `mistral-pentest` | `mistral-small:24b` | 24B | tight | Balanced code + reasoning |
-| `codestral-pentest` | `codestral:22b` | 22B | **fits** | **Recommended 16GB default** — coder, fits comfortably |
-| `gemma4-pentest` | `gemma4:12b` | 12B | **fits** | Laptop-friendly reasoning / report writing |
-| `qwen-pentest-web` | `qwen2.5-coder:7b` | 7B | **fits** | **Web app specialization** — React/Node/Django, GraphQL, OAuth, CSP |
-| `qwen-pentest-infra` | `qwen2.5-coder:7b` | 7B | **fits** | **Infra/Network specialization** — AD, Cloud, Lateral movement |
-| `qwen-pentest-14b` | `qwen2.5-coder:14b` | 14B | **fits** | Optional small coder (pre-2025 base) |
-| `qwen-pentest-1.5b` | `qwen2.5-coder:1.5b` | 1.5B | **fits** | Ultra-lightweight for CPU/minimal GPU |
-| `qwen-pentest` · `qwen-pentest-32b` · `gemma-pentest` | qwen2.5 / gemma3 | 7B–32B | mixed | Original wrappers (kept) |
-
-Model ranking (which one the two-model verifier trusts to override which) is informed by
-mid-2026 agentic/coding benchmarks — tune it in `config.yaml` under `model_rank`.
-
-"Tuned not to refuse" means **no needless refusals on legitimate authorized work** — full payloads,
-exploits, and PoCs, no lectures or disclaimers. It does *not* mean "trust it blindly": the models
-are still told never to invent a fact (so CVSS scores are real) and to keep testing impact-limited
-and in-scope. If a model errors or returns nothing, the tool falls back to the next one in your
-config, so a single model failing never breaks your workflow. And `scripts/ask.sh` adds a second
-layer: if a model hedges on a legitimate request, it re-frames the ask and routes to a more
-compliant model.
-
-### Which one should I build?
-
-Build only what your hardware runs well — you don't need all of them.
-
-- **16GB GPU (NVIDIA):** `codestral-pentest` is the default (fits comfortably). Add
-  `gemma4-pentest` (fast/light), `qwen-pentest-web` or `qwen-pentest-infra` for specialized tasks, and if you accept some CPU offload, `qwen3.8-pentest`, `qwen3.9-pentest` or `nemotron-pentest` for higher-end answers.
-- **24GB+ GPU:** `muse-pentest`, `qwen3.8-pentest`, `qwen3.9-pentest`, and `qwen3-pentest-30b` all run comfortably —
-  make one of them your `chat_model`.
-- **Laptop / ≤12GB:** `gemma4-pentest` (~7.6GB), `qwen-pentest` (7B), `qwen-pentest-web` or `qwen-pentest-infra` for specialized tasks.
-- **Ultra-lightweight / CPU only:** `qwen-pentest-1.5b` (1.5B) runs on CPU or 4GB VRAM.
-- **Apple Silicon:** use the `-mlx` builds (table below); with 32GB+ unified memory the 30B MoE
-  models (`nemotron`, `qwen3.6-35b`) are excellent and fast.
-
-### Apple Silicon (MLX) equivalents
-
-MLX builds are optimized for Apple's Metal / unified memory. Swap the one `FROM` line in the
-modelfile to the MLX tag:
-
-| Wrapper | Default `FROM` | Apple Silicon `FROM` | MLX size |
-|---|---|---|---|
-| `muse-pentest` | `muse-glimmer` | `muse-glimmer:30b-mlx` | ~21GB |
-| `qwen3.9-pentest` | `qwen3.9` | `qwen3.9:27b-mlx` | ~18GB |
-| `qwen3.8-pentest` | `qwen3.8` | `qwen3.8:27b-mlx` | ~18GB |
-| `qwen3.6-pentest` | `qwen3.6:35b` | `qwen3.6:35b-mlx` | ~22GB |
-| `nemotron-pentest` | `nemotron-3.5-lightning` | `nemotron-3.5-lightning:30b-a3b-mlx` | ~23GB |
-| `gemma4-pentest` | `gemma4:12b` | `gemma4:12b-mlx` | ~7.7GB |
-| `qwen3-pentest-30b` · `codestral` · `mistral` | — | check `ollama show`/the library for an `-mlx` tag | — |
-
-Run `ollama show <tag>` to confirm a build's exact size, context, and quant before committing.
-
-### Reducing VRAM
-
-Three low-risk levers, smallest-effort first:
-
-1. **Lean context (already set).** The modelfiles ship a small `num_ctx` (8K–16K) because this RAG
-   only needs a few thousand tokens — the KV cache is the biggest VRAM cost on these long-context
-   models. Raise `PARAMETER num_ctx` only if you need it.
-2. **KV-cache quantization + flash attention.** Start Ollama with
-   `scripts/ollama_serve_lowvram.sh` (sets `OLLAMA_FLASH_ATTENTION=1` and
-   `OLLAMA_KV_CACHE_TYPE=q8_0`) — roughly halves KV-cache memory with negligible quality loss
-   (`KV=q4_0` for even less).
-3. **Smaller quant tags.** Swap `FROM` to a QAT or FP4 build — e.g. `gemma4:12b-it-qat` or
-   `muse-glimmer:30b-nvfp4` (~17GB) — smaller than the default Q4 with minimal quality loss.
-
-(Note: MoE models like `nemotron` and `qwen3.6-35b-a3b` reduce *compute*, not VRAM — all their
-weights still load. They're the way to go for **speed**, not footprint.)
-
-### Speed vs accuracy (thinking)
-
-The new models are "thinking" models — they can reason before answering, which **improves accuracy**
-but is slower. You choose:
-
-- **`/ask` and `/harden`** think by default (accuracy). **`/tool`** never thinks (its output must be
-  clean, pipeable commands, and any trace is stripped).
-- Override globally with `think: true` (always reason) or `think: false` (fastest) in `config.yaml`.
-- Override per request: CLI `--think` / `--no-think`, or `"think": true`/`false` in the API body.
+### 1. Install Dependencies
 
 ```bash
-python rag/rag_core.py ask "CVSS for an authenticated IDOR?" --think      # max accuracy
-python rag/rag_core.py ask "quick: what is BOLA?" --no-think               # max speed
-curl -s localhost:8600/ask -d '{"q":"CVSS for reflected XSS?","think":true}'
+pip install -r requirements.txt
 ```
 
-## The knowledge — security cards (`cards/`)
+### 2. Pull and Build Base Models
 
-The heart of the project is **34 hand-written security cards**, one concept each: IDOR/BOLA,
-SQLi/NoSQLi, JWT/auth, RCE, SSTI, XXE, deserialization, GraphQL, path traversal, SSRF, XSS, CORS,
-OAuth/SSO, HTTP request smuggling, file upload, race conditions, open redirect, subdomain takeover,
-CSRF, business-logic, PII, Android/iOS, cloud & IAM, Active Directory, network & TLS, recon, and a
-defensive hardening advisor. Each is distilled from authoritative sources (OWASP, PortSwigger, CWE,
-CVSS v3.1) — see **[REFERENCES.md](REFERENCES.md)**.
+```bash
+# Pull base model from Ollama
+ollama pull codestral:22b
 
-**Why cards, not raw docs:** small, focused cards keep the search sharp and the answers grounded —
-the model gets exactly the one relevant concept, not paragraphs of a 200-page guide.
+# Create tuned pentest wrapper
+ollama create codestral-pentest -f modelfiles/codestral-pentest.Modelfile
+```
 
-**Add your own knowledge:** drop any `.md` file into `cards/` and re-run the ingest step:
+### 3. Configure Scope & Guardrails
+
+```bash
+cp config.example.yaml config.yaml
+# Edit config.yaml: specify in_scope_hosts and forbidden actions
+```
+
+### 4. Ingest Security Cards into Vector Index
 
 ```bash
 python rag/rag_core.py ingest cards
 ```
 
-To turn a PDF (a standard, a manual, a methodology) into a clean card, use the companion
-**[pdf-to-llm-plugin](https://github.com/Saptarshi-Nag189/pdf-to-llm-plugin)**.
+---
 
-## Configuration (`config.yaml`)
+## Configuration Reference (`config.yaml`)
 
-You own the policy. In `config.yaml` you set your in-scope hosts, forbidden actions, which models
-to use and in what order, and how retrieval is tuned. These aren't just suggestions to the model —
-`in_scope_hosts` and `forbid` are actually enforced on every generated command, and the API layers
-a token and an audit log on top. See `config.example.yaml` for every option, commented.
+```yaml
+# Primary model for generation
+chat_model: codestral-pentest
+embedding_model: all-MiniLM-L6-v2
+db_dir: db
+cards_dir: cards
 
-## Offline by design
+# Fallback sequence if primary model is unavailable
+model_fallbacks:
+  - codestral-pentest
+  - gemma4-pentest
+  - qwen-pentest-web
+  - qwen-pentest-1.5b
 
-No cloud AI, no external API calls, no telemetry. Embeddings, generation, and the search index all
-run locally. After the first model download it works fully air-gapped — exactly what engagements
-with strict data-handling rules require.
+# Guardrails & Rules of Engagement
+guardrails:
+  in_scope_hosts:
+    - "staging.example.com"
+    - "10.10.10.0/24"
+  forbid:
+    - pattern: "--flood"
+      reason: "Denial of service attack vector prohibited"
+    - pattern: "--dump-all"
+      reason: "Bulk database exfiltration prohibited"
+```
 
-## Related projects
-
-- **[omniscience_pro](https://github.com/Saptarshi-Nag189/omniscience_pro)** — the general-purpose
-  offline RAG this security-focused tool descends from.
-- **[pdf-to-llm-plugin](https://github.com/Saptarshi-Nag189/pdf-to-llm-plugin)** — turn PDFs into
-  clean cards for the `cards/` folder.
-
-## License
-
-MIT — see `LICENSE`.
+---
 
 ## Disclaimer
 
-Provided for authorized security testing and research only. The authors are not responsible for
-misuse. Testing systems without authorization is illegal. Always operate within a signed
-engagement, an in-scope bug-bounty program, or systems you own.
+This software is strictly provided for authorized security testing, educational research, and defensive hardening. Testing systems without prior explicit written permission is illegal under computer crime laws (including the CFAA and Computer Misuse Act). The authors assume no liability for misuse.
