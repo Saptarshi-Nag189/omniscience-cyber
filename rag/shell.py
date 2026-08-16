@@ -23,12 +23,12 @@ from typing import Any, Dict, List, Optional
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from .models import Campaign, CampaignStep, CampaignState, StepState, Severity
-from .state import CampaignStateStore, CampaignRuntime
-from .planner import create_campaign_from_template, get_next_pending_steps, build_context
-from .executor import KaliExecutor, ExecutorConfig
-from .scope_guard import ScopeGuard
-from .findings import create_finding_store
+from rag.models import Campaign, CampaignStep, CampaignState, StepState, Severity
+from rag.state import CampaignStateStore, CampaignRuntime
+from rag.planner import create_campaign_from_template, get_next_pending_steps, build_context
+from rag.executor import KaliExecutor, ExecutorConfig
+from rag.scope_guard import ScopeGuard
+from rag.findings import create_finding_store
 
 class OmniscienceShell(cmd.Cmd):
     """Interactive REPL for omniscience-cyber."""

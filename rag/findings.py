@@ -33,7 +33,7 @@ class FindingStore:
                     cvss_score REAL,
                     severity TEXT,
                     cve_ids TEXT,
-                    references TEXT,
+                    "references" TEXT,
                     tags TEXT,
                     status TEXT DEFAULT "open",
                     dedup_hash TEXT NOT NULL,
@@ -70,8 +70,8 @@ class FindingStore:
                     INSERT INTO findings (
                         id, campaign_id, step_id, tool, vuln_type, title, description,
                         host, port, parameter, evidence, cvss_vector, cvss_score, severity,
-                        cve_ids, references, tags, status, dedup_hash, created_at, updated_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        cve_ids, "references", tags, status, dedup_hash, created_at, updated_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, (
                     finding.id,
                     finding.campaign_id,
@@ -133,7 +133,7 @@ class FindingStore:
             conn.execute("""
                 UPDATE findings SET
                     title = ?, description = ?, evidence = ?, cvss_vector = ?,
-                    cvss_score = ?, severity = ?, cve_ids = ?, references = ?,
+                    cvss_score = ?, severity = ?, cve_ids = ?, "references" = ?,
                     tags = ?, status = ?, updated_at = ?
                 WHERE id = ?
             """, (

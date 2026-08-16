@@ -1,0 +1,24 @@
+name: Web Application Reconnaissance
+description: "Full web app recon: nmap -> nuclei -> ffuf"
+steps:
+  - id: recon_nmap
+    tool: nmap
+    args: ["-sV", "-T2", "-oX", "-", "{{target}}"]
+    parser: nmap_xml
+    description: "Service detection on target"
+    timeout: 300
+  - id: recon_nuclei
+    tool: nuclei
+    args: ["-u", "{{target}}", "-json", "-tags", "cve", "-rl", "20"]
+    parser: nuclei_json
+    description: "CVE/misconfiguration scan"
+    timeout: 600
+    depends_on: ["recon_nmap"]
+  - id: recon_ffuf
+    tool: ffuf
+    args: ["-u", "{{target}}/FUZZ", "-w", "/usr/share/seclists/Discovery/Web-Content/common.txt", "-of", "json", "-rate", "50"]
+    parser: ffuf_json
+    description: "Directory brute force"
+    timeout: 600
+    depends_on: ["recon_nmap"]
+    condition: "port 80 in open_ports or port 443 in open_ports"

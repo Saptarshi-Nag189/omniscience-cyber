@@ -1,0 +1,23 @@
+name: Infrastructure Reconnaissance
+description: "Network/AD recon: nmap -> masscan -> nuclei"
+steps:
+  - id: recon_masscan
+    tool: masscan
+    args: ["-p1-65535", "--rate", "1000", "-oJ", "-", "{{target}}"]
+    parser: masscan_json
+    description: "Fast port scan"
+    timeout: 600
+  - id: recon_nmap
+    tool: nmap
+    args: ["-sV", "-T2", "-p", "{{open_ports}}", "-oX", "-", "{{target}}"]
+    parser: nmap_xml
+    description: "Service detection on open ports"
+    timeout: 300
+    depends_on: ["recon_masscan"]
+  - id: recon_nuclei
+    tool: nuclei
+    args: ["-u", "{{target}}", "-json", "-tags", "network,cve", "-rl", "20"]
+    parser: nuclei_json
+    description: "Network CVE scan"
+    timeout: 600
+    depends_on: ["recon_nmap"]

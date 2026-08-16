@@ -1,0 +1,16 @@
+name: Mobile Application Reconnaissance
+description: "Mobile app recon: apktool -> mobsf"
+steps:
+  - id: apk_decompile
+    tool: apktool
+    args: ["d", "{{target}}", "-o", "decompiled_apk"]
+    parser: generic
+    description: "Decompile APK"
+    timeout: 300
+  - id: mobsf_scan
+    tool: mobsf
+    args: ["-f", "{{target}}", "--json"]
+    parser: generic
+    description: "Static analysis with MobSF"
+    timeout: 600
+    depends_on: ["apk_decompile"]

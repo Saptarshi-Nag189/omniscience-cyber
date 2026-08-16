@@ -1,0 +1,23 @@
+name: Active Directory Enumeration
+description: "AD enumeration and attack path analysis"
+steps:
+  - id: recon_nmap
+    tool: nmap
+    args: ["-sV", "-p", "88,135,139,389,445,636,3268,3269,5985", "-oX", "-", "{{target}}"]
+    parser: nmap_xml
+    description: "AD service detection"
+    timeout: 300
+  - id: enum_ldap
+    tool: enum4linux-ng
+    args: ["-A", "-oJ", "{{target}}"]
+    parser: generic
+    description: "LDAP enumeration"
+    timeout: 300
+    depends_on: ["recon_nmap"]
+  - id: bloodhound
+    tool: bloodhound-python
+    args: ["-u", "{{username}}", "-p", "{{password}}", "-ns", "{{target}}", "-d", "{{domain}}", "-c", "All", "--zip"]
+    parser: generic
+    description: "BloodHound data collection"
+    timeout: 600
+    depends_on: ["recon_nmap"]

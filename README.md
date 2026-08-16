@@ -33,13 +33,16 @@ answer against those same cards before you trust it.
 
 ```mermaid
 flowchart TD
-    Q["Your question"] --> CORE["rag_core — runs locally"]
-    CORE -->|"find the most relevant cards"| DB[("Local card library<br/>(ChromaDB)")]
-    DB -->|"top matching cards"| CORE
-    CORE -->|"your question + those cards"| GEN["Local AI model<br/>(qwen / gemma-pentest via Ollama)"]
-    GEN -->|"draft answer"| VERIFY{"Second model<br/>double-checks it"}
-    VERIFY -->|"grounded, matches the cards"| OK["✅ VERIFIED"]
-    VERIFY -->|"invented CVSS / scope / claim"| FLAG["⚠️ FLAGGED"]
+    SHELL["Shell (REPL)"] --> PLANNER["Planner (DAG/Plan)"]
+    PLANNER --> EXECUTOR["Executor (Executor/Parser)"]
+    
+    SHELL --> GUARD["Scope Guard (RoE Enforcement)"]
+    PLANNER --> GUARD
+    EXECUTOR --> GUARD
+    
+    GUARD --> FINDINGS["Findings Store"]
+    GUARD --> AUDIT["Audit Trail"]
+    GUARD --> REPORT["Report Generator (MD/HTML/JSON)"]
 ```
 
 Nothing in that diagram touches the internet after the first-time setup.
