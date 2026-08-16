@@ -240,7 +240,7 @@ Campaign = {
 
 | Component | Status | Priority | Notes |
 |-----------|--------|----------|-------|
-| **`rag/shell.py` indentation** | 🔴 Broken | **Critical** | `OmniscienceShell` class has indentation errors preventing import. `do_run`/`do_plan` method bodies not properly indented. |
+| **`rag/shell.py` indentation** | 🔴 Broken | **Critical** | `OmniscienceShell` class has indentation errors preventing import. `do_run`/`do_plan` method bodies not properly indented. **Known issue: IndentationError on line 103 prevents import.** |
 | **Phase 4 REPL verification** | 🟡 Untested | High | Interactive shell not verified end-to-end due to import failure |
 | **API WebSocket streaming** | 🟡 Unverified | High | SSE `/stream` endpoint not tested end-to-end |
 | **Audit trail verification** | 🟡 Untested | Medium | Hash chain verification not exercised end-to-end |
