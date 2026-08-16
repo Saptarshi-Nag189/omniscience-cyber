@@ -1,100 +1,168 @@
 #!/usr/bin/env python3
+from __future__ import annotations
+
 """
 scope_guard.py — Rules-of-Engagement (RoE) enforcement for omniscience-cyber.
 
 The README and config promise "you set the guardrails" (in_scope_hosts, forbid,
 require), and verify.py / the test scripts tell the model to "defer to scope_guard".
-This module is that guard: a small, offline, dependency-free enforcement layer that
-inspects a GENERATED Kali command and decides whether running it would stay inside
+This module is that guard: a local, offline, dependency-free enforcement layer that
+inspects a GENERATED Kali command and decides whether running it stays inside
 the engagement's rules of engagement.
 
 It does two things, both LOCAL and deterministic:
-
   1. SCOPE — extract every host/IP/URL a command targets and check it against the
-     engagement's `in_scope_hosts`. Anything not on the list is out of scope.
+     engagement's `in_scope_hosts` (including subdomains, wildcards, and CIDR ranges).
   2. RULES OF ENGAGEMENT — scan the command for patterns that map to a `forbid`
      rule (denial-of-service / stress flags, bulk-PII exfiltration like
-     `sqlmap --dump-all`, unthrottled brute-force, etc.).
-
-The result is advisory-by-default but fail-closed on the dangerous stuff: the API
-and wrapper scripts use it to BLOCK an out-of-scope or DoS command before it is
-ever handed to a shell, and to annotate everything else with the scope decision.
-
-Nothing here talks to a model or the network — it is pure string analysis so it
-can run air-gapped and be unit-tested without Ollama.
+     `sqlmap --dump-all`, unthrottled brute-force, OS command execution, etc.).
 
 Public API:
-  guard = ScopeGuard.from_config(cfg)          # cfg = loaded config dict
+  guard = ScopeGuard.from_config(cfg)
+  guard.is_in_scope("staging.example.com")     # bool
   decision = guard.check_command("ffuf -u https://api.staging.example.com/FUZZ ...")
-  # decision.verdict in {"allow", "warn", "block"}; decision.reasons is a list.
-  hosts = guard.extract_targets(command)       # just the hosts/IPs a command hits
+  # decision.verdict in {"allow", "warn", "block"}; decision.allowed -> bool
+  targets = guard.extract_targets(command)     # list of lowercased target hosts/IPs
 """
-from __future__ import annotations
 
 import ipaddress
 import re
 from dataclasses import dataclass, field
-from typing import Iterable
+from typing import Any, Dict, Iterable, List, Optional, Set, Tuple
 
 
-# ── Forbidden / dangerous command patterns, grouped by the `forbid` rule they map to ──
-# Each entry: (compiled regex, forbid-rule-key, human reason). Kept conservative — we
-# only match things that are unambiguously a DoS / bulk-exfil / unthrottled action so
-# legitimate impact-limited PoCs are not blocked.
-_DANGER_PATTERNS: list[tuple[re.Pattern, str, str]] = [
+# ── Default forbidden rule categories ─────────────────────────────────────────
+
+DEFAULT_FORBIDDEN_RULES: Set[str] = {
+    "dos_or_stress_testing",
+    "bulk_real_pii_exfiltration",
+    "out_of_scope_targets",
+    "destructive_commands",
+}
+
+
+# ── Forbidden / dangerous command patterns ────────────────────────────────────
+
+_DANGER_PATTERNS: List[Tuple[re.Pattern, str, str]] = [
     # ── denial-of-service / stress ────────────────────────────────────────────
-    (re.compile(r"\bhping3?\b.*(--flood|--faster|-i\s*u\d)", re.I),
-     "dos_or_stress_testing", "hping flood/stress flags"),
-    (re.compile(r"\b(slowloris|slowhttptest|t50|mhddos|goldeneye)\b", re.I),
-     "dos_or_stress_testing", "DoS/stress tool"),
-    (re.compile(r"\bab\b.*-n\s*\d{5,}", re.I),
-     "dos_or_stress_testing", "ApacheBench with a very large request count"),
-    (re.compile(r"\bwrk\b.*-c\s*\d{3,}", re.I),
-     "dos_or_stress_testing", "wrk with a very high connection count"),
-    (re.compile(r"--flood\b", re.I),
-     "dos_or_stress_testing", "explicit --flood flag"),
-    # ── bulk / real-PII exfiltration (PoC must stay impact-limited) ────────────
-    (re.compile(r"\bsqlmap\b.*--dump-all\b", re.I),
-     "bulk_real_pii_exfiltration", "sqlmap --dump-all pulls entire databases"),
-    (re.compile(r"\bsqlmap\b.*(--dump\b(?!.*(--start|--stop|--where|-C\b)))", re.I),
-     "bulk_real_pii_exfiltration",
-     "sqlmap --dump without --start/--stop/--where/-C bounds (unbounded dump)"),
-    (re.compile(r"\bsqlmap\b.*--os-shell\b", re.I),
-     "bulk_real_pii_exfiltration", "sqlmap --os-shell (full OS command execution)"),
+    (
+        re.compile(r"\bhping3?\b.*(--flood|--faster|-i\s*u\d)", re.I),
+        "dos_or_stress_testing",
+        "hping flood/stress flags",
+    ),
+    (
+        re.compile(r"\b(slowloris|slowhttptest|t50|mhddos|goldeneye|loic|hoic|xerxes)\b", re.I),
+        "dos_or_stress_testing",
+        "DoS/stress tool invocation",
+    ),
+    (
+        re.compile(r"\bab\b.*(-n\s*(?:[1-9]\d{3,}|\d{5,})|-c\s*(?:[1-9]\d{2,}|\d{4,}))", re.I),
+        "dos_or_stress_testing",
+        "ApacheBench with excessive request/concurrency limit",
+    ),
+    (
+        re.compile(r"\bwrk\b.*(-c\s*(?:[1-9]\d{2,}|\d{4,})|-t\s*(?:[5-9]\d|\d{3,}))", re.I),
+        "dos_or_stress_testing",
+        "wrk with excessive connections/threads",
+    ),
+    (
+        re.compile(r"--flood\b", re.I),
+        "dos_or_stress_testing",
+        "explicit --flood flag",
+    ),
+    (
+        re.compile(r"\bnmap\b.*(-T5\b|--min-rate\s*(?:[1-9]\d{3,}|\d{5,})|--max-rate\s*(?:[5-9]\d{4,}|\d{6,}))", re.I),
+        "dos_or_stress_testing",
+        "nmap insane timing (-T5) or high rate limit",
+    ),
+    (
+        re.compile(r"\bmasscan\b.*--rate\s*(?:[5-9]\d{4,}|\d{6,})", re.I),
+        "dos_or_stress_testing",
+        "masscan dangerously high packet rate (>=50000)",
+    ),
+    (
+        re.compile(r"\bffuf\b.*-rate\s*0\b", re.I),
+        "dos_or_stress_testing",
+        "ffuf -rate 0 (unlimited request rate)",
+    ),
+
+    # ── bulk / unbounded PII exfiltration ─────────────────────────────────────
+    (
+        re.compile(r"\bsqlmap\b.*--dump-all\b", re.I),
+        "bulk_real_pii_exfiltration",
+        "sqlmap --dump-all pulls entire databases",
+    ),
+    (
+        re.compile(r"\bsqlmap\b.*(--dump\b(?!.*(--start|--stop|--where|-C\b|--count|--schema|--tables|--columns)))", re.I),
+        "bulk_real_pii_exfiltration",
+        "sqlmap --dump without bounding flags (--start/--stop/--where/-C)",
+    ),
+    (
+        re.compile(r"\bsqlmap\b.*(--os-shell|--os-cmd|--os-pwn)\b", re.I),
+        "bulk_real_pii_exfiltration",
+        "sqlmap full OS command execution / shell breakout",
+    ),
+
     # ── unthrottled / aggressive brute force ──────────────────────────────────
-    (re.compile(r"\bhydra\b(?!.*-t\s*\d)", re.I),
-     "dos_or_stress_testing", "hydra without a -t task/throttle limit"),
-    (re.compile(r"\bhydra\b.*-t\s*(?:[6-9]\d|\d{3,})", re.I),
-     "dos_or_stress_testing", "hydra with a very high -t task count (>=60)"),
-    (re.compile(r"\bnmap\b.*(-T5\b|--min-rate\s*(?:[1-9]\d{4,}))", re.I),
-     "dos_or_stress_testing", "nmap insane timing (-T5) / very high --min-rate"),
-    (re.compile(r"\bffuf\b.*-rate\s*0\b", re.I),
-     "dos_or_stress_testing", "ffuf -rate 0 (unlimited request rate)"),
+    (
+        re.compile(r"\bhydra\b(?!.*-t\s*\d)", re.I),
+        "dos_or_stress_testing",
+        "hydra without a -t task/throttle limit",
+    ),
+    (
+        re.compile(r"\bhydra\b.*-t\s*(?:[6-9]\d|\d{3,})", re.I),
+        "dos_or_stress_testing",
+        "hydra with excessive task concurrency (-t >= 60)",
+    ),
+    (
+        re.compile(r"\bmedusa\b(?!.*-t\s*\d)", re.I),
+        "dos_or_stress_testing",
+        "medusa without a -t task concurrency limit",
+    ),
+    (
+        re.compile(r"\bmedusa\b.*-t\s*(?:[6-9]\d|\d{3,})", re.I),
+        "dos_or_stress_testing",
+        "medusa with excessive task concurrency (-t >= 60)",
+    ),
+
+    # ── destructive / wipe commands ───────────────────────────────────────────
+    (
+        re.compile(r"\b(rm\s+-rf\s+/(?:\s|$)|mkfs\b|dd\s+if=/dev/)", re.I),
+        "destructive_commands",
+        "destructive disk/system command detected",
+    ),
 ]
 
-# Tokens that clearly are NOT targets even though they look host-ish.
-_PLACEHOLDER_HOSTS = {"<target>", "target", "example.com", "localhost", "127.0.0.1"}
+# Tokens that clearly are NOT targets even though they look host-ish
+_PLACEHOLDER_HOSTS = {
+    "<target>",
+    "target",
+    "example.com",
+    "localhost",
+    "127.0.0.1",
+    "0.0.0.0",
+    "::1",
+}
 
-# File extensions that make a token a filename (wordlist, script, output), NOT a host.
-# `rockyou.txt` / `payloads.json` must never be read as a target.
+# File extensions that make a token a filename, NOT a host
 _FILE_EXTS = {
     "txt", "lst", "list", "dic", "dict", "py", "sh", "rb", "pl", "php", "js", "ts",
     "json", "yaml", "yml", "xml", "html", "htm", "css", "md", "conf", "cfg", "ini",
     "log", "csv", "tsv", "pdf", "doc", "docx", "xls", "xlsx", "zip", "gz", "tar",
     "tgz", "bz2", "7z", "png", "jpg", "jpeg", "gif", "svg", "pcap", "cap", "pem",
-    "key", "crt", "cer", "der", "db", "sqlite", "bak", "out", "tmp", "env", "so",
+    "key", "crt", "cer", "der", "db", "sqlite", "sqlite3", "bak", "out", "tmp", "env", "so",
 }
 
 
 @dataclass
 class Decision:
     """Outcome of inspecting one command."""
-    verdict: str                                   # "allow" | "warn" | "block"
+    verdict: str                                          # "allow" | "warn" | "block"
     command: str = ""
-    targets: list = field(default_factory=list)    # hosts/IPs the command touches
-    out_of_scope: list = field(default_factory=list)
-    reasons: list = field(default_factory=list)    # human-readable strings
-    forbidden_hits: list = field(default_factory=list)   # (rule, reason) tuples
+    targets: List[str] = field(default_factory=list)      # hosts/IPs the command touches
+    out_of_scope: List[str] = field(default_factory=list)
+    reasons: List[str] = field(default_factory=list)      # human-readable strings
+    forbidden_hits: List[Tuple[str, str]] = field(default_factory=list)  # (rule, reason) tuples
 
     @property
     def allowed(self) -> bool:
@@ -108,33 +176,58 @@ class Decision:
         prefix = "# BLOCKED" if self.verdict == "block" else "# WARNING"
         return f"{prefix}: " + "; ".join(self.reasons)
 
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "verdict": self.verdict,
+            "allowed": self.allowed,
+            "command": self.command,
+            "targets": self.targets,
+            "out_of_scope": self.out_of_scope,
+            "reasons": self.reasons,
+            "forbidden_hits": [list(hit) for hit in self.forbidden_hits],
+        }
+
 
 class ScopeGuard:
-    def __init__(self, in_scope_hosts: Iterable[str] | None = None,
-                 forbid: Iterable[str] | None = None,
-                 block_out_of_scope: bool = True):
-        self.in_scope_hosts = [h.strip().lower() for h in (in_scope_hosts or []) if h and h.strip()]
-        self.forbid = set(forbid or [])
-        # If no scope list is configured we can't decide scope, so we WARN rather than
-        # BLOCK on scope (the operator hasn't told us what's in scope yet).
-        self.block_out_of_scope = block_out_of_scope and bool(self.in_scope_hosts)
+    """Rules-of-Engagement and scope guardrail engine."""
+
+    def __init__(
+        self,
+        in_scope_hosts: Optional[Iterable[str]] = None,
+        forbid: Optional[Iterable[str]] = None,
+        block_out_of_scope: bool = True,
+    ):
+        self.in_scope_hosts: List[str] = [
+            h.strip().lower() for h in (in_scope_hosts or []) if h and h.strip()
+        ]
+        if forbid is None:
+            self.forbid: Set[str] = set(DEFAULT_FORBIDDEN_RULES)
+        else:
+            self.forbid: Set[str] = {f.strip() for f in forbid if f and f.strip()}
+
+        # If no scope list is configured we warn rather than block on unlisted scope
+        self.block_out_of_scope: bool = block_out_of_scope and bool(self.in_scope_hosts)
 
     @classmethod
-    def from_config(cls, cfg: dict | None) -> "ScopeGuard":
+    def from_config(cls, cfg: Optional[Dict[str, Any]]) -> ScopeGuard:
         g = (cfg or {}).get("guardrails", {}) or {}
-        return cls(in_scope_hosts=g.get("in_scope_hosts", []),
-                   forbid=g.get("forbid", []))
+        return cls(
+            in_scope_hosts=g.get("in_scope_hosts", []),
+            forbid=g.get("forbid", None),
+            block_out_of_scope=g.get("block_out_of_scope", True),
+        )
 
-    # ── target extraction ─────────────────────────────────────────────────────
+    # ── Target extraction ─────────────────────────────────────────────────────
+
     _URL_RE = re.compile(r"https?://([^/\s\"'<>|]+)", re.I)
-    # host:port or bare host/IP that appears as a standalone token
     _HOST_RE = re.compile(
         r"(?<![\w.-])((?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,63}"
-        r"|(?:\d{1,3}\.){3}\d{1,3})(?::\d+)?(?![\w.-])")
+        r"|(?:\d{1,3}\.){3}\d{1,3})(?::\d+)?(?![\w.-])"
+    )
 
-    def extract_targets(self, command: str) -> list[str]:
+    def extract_targets(self, command: str) -> List[str]:
         """Best-effort host/IP extraction from a command line. De-duplicated, lowercased."""
-        found: list[str] = []
+        found: List[str] = []
         cmd = command or ""
         for m in self._URL_RE.finditer(cmd):
             host = m.group(1).split("@")[-1].split(":")[0].lower()
@@ -142,11 +235,12 @@ class ScopeGuard:
         for m in self._HOST_RE.finditer(cmd):
             host = m.group(1).split(":")[0].lower()
             found.append(host)
-        out: list[str] = []
+
+        out: List[str] = []
         for h in found:
             if not h or h in _PLACEHOLDER_HOSTS or h.startswith("<"):
                 continue
-            # skip filenames (rockyou.txt, payloads.json, …) — not targets
+            # Skip filenames (e.g., wordlists, configs)
             last = h.rsplit(".", 1)[-1]
             if last in _FILE_EXTS and not h.replace(".", "").isdigit():
                 continue
@@ -154,43 +248,79 @@ class ScopeGuard:
                 out.append(h)
         return out
 
-    # ── scope check ────────────────────────────────────────────────────────────
+    # ── Scope checking ────────────────────────────────────────────────────────
+
     def in_scope(self, host: str) -> bool:
-        """A host is in scope if it exactly matches, is a subdomain of, or (for a
-        CIDR entry) falls inside a listed range."""
-        host = (host or "").strip().lower().rstrip(".")
-        if not host:
+        """
+        Check if a host/IP is within in_scope_hosts.
+        Supports exact domain match, subdomains, wildcards (*.domain.com), and CIDRs.
+        """
+        raw_host = (host or "").strip().lower().rstrip(".")
+        if not raw_host:
             return True  # nothing to check
+
+        # Strip optional port if passed like "192.168.1.1:8080" or "example.com:443"
+        clean_host = raw_host.split(":")[0]
+
+        # If no scope defined, return True (or not restricted)
+        if not self.in_scope_hosts:
+            return True
+
+        # Try IP check
+        host_ip = None
+        try:
+            host_ip = ipaddress.ip_address(clean_host)
+        except ValueError:
+            host_ip = None
+
         for entry in self.in_scope_hosts:
-            entry = entry.rstrip(".")
-            if host == entry or host.endswith("." + entry):
+            entry_clean = entry.rstrip(".")
+
+            # Wildcard domain check e.g. *.example.com
+            if entry_clean.startswith("*."):
+                suffix = entry_clean[1:]  # .example.com
+                base = entry_clean[2:]    # example.com
+                if clean_host == base or clean_host.endswith(suffix):
+                    return True
+                continue
+
+            # Standard domain & subdomain check
+            if clean_host == entry_clean or clean_host.endswith("." + entry_clean):
                 return True
-            # CIDR / IP-range entries
-            if "/" in entry:
+
+            # CIDR or IP match
+            if "/" in entry_clean or (host_ip is not None and not entry_clean.replace(".", "").isalpha()):
                 try:
-                    net = ipaddress.ip_network(entry, strict=False)
-                    if ipaddress.ip_address(host) in net:
+                    net = ipaddress.ip_network(entry_clean, strict=False)
+                    if host_ip is not None and host_ip in net:
                         return True
                 except ValueError:
                     pass
+
         return False
 
-    # ── the main entry point ────────────────────────────────────────────────────
+    def is_in_scope(self, host: str) -> bool:
+        """Helper alias for in_scope."""
+        return self.in_scope(host)
+
+    # ── Main check entry point ────────────────────────────────────────────────
+
     def check_command(self, command: str) -> Decision:
+        """Inspect command for forbidden RoE patterns and out-of-scope targets."""
         cmd = (command or "").strip()
         d = Decision(verdict="allow", command=cmd)
 
-        # skip comments / non-commands the model emitted
+        # Skip empty lines or shell comments
         if not cmd or cmd.startswith("#"):
             return d
 
-        # 1) forbidden / dangerous RoE patterns
+        # 1) Check dangerous / forbidden RoE patterns
         for pattern, rule, reason in _DANGER_PATTERNS:
             if rule in self.forbid and pattern.search(cmd):
                 d.forbidden_hits.append((rule, reason))
                 d.reasons.append(f"{rule}: {reason}")
 
-        # 2) scope
+        # 2) Scope check on extracted targets
         d.targets = self.extract_targets(cmd)
         d.out_of_scope = [h for h in d.targets if not self.in_scope(h)]
         if d.out_of_scope:
@@ -199,22 +329,26 @@ class ScopeGuard:
             else:
                 d.reasons.append(
                     "target(s) not verifiable against scope (no in_scope_hosts set): "
-                    + ", ".join(d.out_of_scope))
+                    + ", ".join(d.out_of_scope)
+                )
 
-        # verdict: any forbidden hit blocks; out-of-scope blocks only when we have a
-        # scope list to judge against; otherwise warn.
+        # Verdict logic:
+        # - Any forbidden rule hit blocks.
+        # - Out-of-scope target blocks if block_out_of_scope is active; otherwise warns.
         if d.forbidden_hits or (d.out_of_scope and self.block_out_of_scope):
             d.verdict = "block"
         elif d.out_of_scope:
             d.verdict = "warn"
+
         return d
 
-    def filter_commands(self, commands: list[str]) -> tuple[list[str], list[Decision]]:
-        """Return (safe_commands, decisions). Blocked commands are replaced by their
-        annotation so a downstream `| bash` cannot run them, but the operator still
-        sees why."""
-        safe: list[str] = []
-        decisions: list[Decision] = []
+    def filter_commands(self, commands: List[str]) -> Tuple[List[str], List[Decision]]:
+        """
+        Return (safe_commands, decisions).
+        Blocked commands are replaced by their annotation comment.
+        """
+        safe: List[str] = []
+        decisions: List[Decision] = []
         for c in commands or []:
             d = self.check_command(c)
             decisions.append(d)
@@ -225,24 +359,30 @@ class ScopeGuard:
         return safe, decisions
 
 
-# ── CLI self-test (no Ollama, no network) ─────────────────────────────────────
+# ── CLI self-test ─────────────────────────────────────────────────────────────
+
 def _self_test() -> int:
     guard = ScopeGuard(
-        in_scope_hosts=["staging.example.com", "10.10.0.0/24"],
-        forbid=["dos_or_stress_testing", "bulk_real_pii_exfiltration",
-                "out_of_scope_targets"],
+        in_scope_hosts=["staging.example.com", "10.10.0.0/24", "*.corp.local"],
+        forbid=[
+            "dos_or_stress_testing",
+            "bulk_real_pii_exfiltration",
+            "out_of_scope_targets",
+            "destructive_commands",
+        ],
     )
     cases = [
-        # (command, expected_verdict)
-        ("ffuf -w <WORDLIST> -u https://api.staging.example.com/FUZZ -rate 50", "allow"),
+        ("ffuf -w wordlist.txt -u https://api.staging.example.com/FUZZ -rate 50", "allow"),
         ("nuclei -u https://staging.example.com -rl 20", "allow"),
         ("nmap -sV 10.10.0.5", "allow"),
-        ("nmap -sV -T5 --min-rate 50000 prod.example.com", "block"),   # DoS + out-of-scope
-        ("sqlmap -u 'https://staging.example.com/x?id=1' --dump-all", "block"),  # bulk PII
+        ("nmap -sV -T5 --min-rate 50000 staging.example.com", "block"),
+        ("sqlmap -u 'https://staging.example.com/x?id=1' --dump-all", "block"),
         ("sqlmap -u 'https://staging.example.com/x?id=1' --dump -C name --start 1 --stop 1", "allow"),
-        ("hydra -l admin -P rockyou.txt staging.example.com http-post-form", "block"),  # no -t
+        ("sqlmap -u 'https://staging.example.com/x?id=1' --os-shell", "block"),
+        ("hydra -l admin -P rockyou.txt staging.example.com http-post-form", "block"),
         ("hydra -l admin -P rockyou.txt -t 4 staging.example.com ssh", "allow"),
-        ("curl https://prod-admin.example.com/api/users", "block"),    # out-of-scope
+        ("curl https://prod-admin.example.com/api/users", "block"),
+        ("curl https://sub.corp.local/test", "allow"),
         ("# not a tool task: needs manual review", "allow"),
     ]
     ok = True
@@ -263,7 +403,6 @@ if __name__ == "__main__":
     if len(sys.argv) >= 2 and sys.argv[1] == "--self-test":
         raise SystemExit(_self_test())
     if len(sys.argv) >= 2:
-        # ad-hoc: scope_guard.py "<command>"  (uses config.yaml if present)
         try:
             import yaml
             from pathlib import Path
