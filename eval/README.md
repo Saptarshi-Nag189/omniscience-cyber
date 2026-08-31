@@ -50,7 +50,16 @@ python eval/plots.py                                         # -> eval/results/*
 #    add groundedness with a small judge:  python eval/run_eval.py --judge qwen-pentest
 ```
 
-Or: `make data && make finetune && make eval && make plots`.
+Or run the entire pipeline with one command:
+
+```bash
+make bench-all        # datasets -> baselines -> QLoRA -> ft model -> eval -> charts
+# 0.5B fallback in one line:
+make bench-all FT_BASE=unsloth/Qwen2.5-Coder-0.5B-Instruct FT_TAG=qwen-pentest-ft-0.5b BASE_OLLAMA=qwen2.5-coder:0.5b
+# add the LLM-judge groundedness metric:  make bench-all JUDGE=qwen-pentest
+```
+
+It stops at the first failing step (e.g. a QLoRA OOM), so eval never runs on a half-built pipeline.
 
 ## Fitting 6GB VRAM / 8GB RAM
 

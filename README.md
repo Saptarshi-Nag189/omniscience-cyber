@@ -340,6 +340,9 @@ pairs. Tuned to fit a 6GB-VRAM / 8GB-RAM laptop (4-bit QLoRA, LoRA-only, tiny ba
 fallback. Full runbook: [`eval/README.md`](eval/README.md); results writeup: [`eval/RESULTS.md`](eval/RESULTS.md).
 
 ```bash
+make bench-all  # ONE COMMAND: datasets -> baselines -> QLoRA -> ft model -> eval -> charts
+
+# ...or step by step:
 make data       # build gold + SFT datasets from the cards
 make finetune   # QLoRA fine-tune (GPU; pip install -r requirements-train.txt)
 make eval       # run the 6-config benchmark -> eval/results/results.csv
