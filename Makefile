@@ -1,5 +1,5 @@
 # omniscience-cyber — convenience targets. No sudo, all local/offline.
-.PHONY: setup models ingest serve serve-ollama test test-guard ask
+.PHONY: setup models ingest serve serve-ollama test test-guard ask data finetune eval plots test-eval
 
 setup:            ## full setup: models + deps + ingest
 	bash scripts/gpu_setup.sh
@@ -39,3 +39,20 @@ test-guard:       ## offline unit test of the Rules-of-Engagement scope guard (n
 
 ask:              ## one-off question: make ask Q="how do I test IDOR?"
 	python rag/rag_core.py ask "$(Q)"
+
+# ── fine-tuning + benchmark (eval/) ───────────────────────────────────────────
+data:             ## (re)build the gold test set + SFT training set from cards
+	python eval/data/_build_gold.py
+	python eval/build_dataset.py
+
+finetune:         ## QLoRA fine-tune the 1.5B base (needs GPU + requirements-train.txt)
+	python eval/finetune.py
+
+eval:             ## run the 6-config benchmark (needs Ollama + the 3 models built)
+	python eval/run_eval.py
+
+plots:            ## render result charts from eval/results/results.csv
+	python eval/plots.py
+
+test-eval:        ## offline unit tests for the eval harness (no GPU/Ollama)
+	python -m pytest tests/test_eval.py -q

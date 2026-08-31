@@ -1,0 +1,15 @@
+# Fine-tuning + benchmark extras (eval/). Install on the GPU box, on top of requirements.txt.
+# NVIDIA CUDA path. On Apple Silicon use MLX-LM instead (see eval/README.md) — unsloth/bitsandbytes
+# are CUDA-only. Torch must match your CUDA/driver; install the right wheel first if needed.
+unsloth>=2024.9              # fast, low-VRAM QLoRA (fits a 6GB card for a 1.5B model)
+trl>=0.9                     # SFTTrainer
+peft>=0.11                   # LoRA
+transformers>=4.44
+datasets>=2.20
+accelerate>=0.33
+bitsandbytes>=0.43           # 4-bit quantization (CUDA)
+sentencepiece>=0.2
+# evaluation-only extras
+rouge-score>=0.1.2           # ROUGE-L metric (metrics.py falls back to a builtin if absent)
+matplotlib>=3.8              # result charts (plots.py)
+# NOTE: sentence-transformers (similarity) + ollama are already in requirements.txt.

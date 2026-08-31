@@ -9,3 +9,10 @@ config.yaml          # user's own config (keep the .example in git)
 *.log
 logs/                 # audit log (engagement records — never commit)
 .DS_Store
+
+# fine-tuning + benchmark artifacts (regenerate locally; the committed RESULTS.md holds the numbers)
+eval/ft_out/          # LoRA adapter, merged model, GGUF exports (large)
+eval/results/*.csv
+eval/results/raw_*.json
+campaigns/            # orchestrator campaign state
+findings.db
