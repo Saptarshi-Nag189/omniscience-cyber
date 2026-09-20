@@ -339,14 +339,20 @@ The gold test set is hand-authored from the cards and **disjoint** from the auto
 pairs. Tuned to fit a 6GB-VRAM / 8GB-RAM laptop (4-bit QLoRA, LoRA-only, tiny batch), with a 0.5B
 fallback. Full runbook: [`eval/README.md`](eval/README.md); results writeup: [`eval/RESULTS.md`](eval/RESULTS.md).
 
-```bash
-make bench-all  # ONE COMMAND: datasets -> baselines -> QLoRA -> ft model -> eval -> charts
+It also measures **RAG pipeline quality** with deterministic math — retrieval (Hit@k, MRR, nDCG@k,
+Precision/Recall), chunking (context→answer recall, chunk-cohesion gap), and answer faithfulness
+(hallucination) / relevancy — and renders everything, plus project-specific stats, into a
+self-contained offline **HTML dashboard**.
 
-# ...or step by step:
+```bash
+make bench-all  # ONE COMMAND: datasets -> baselines -> QLoRA -> ft model -> eval -> RAG metrics -> dashboard
+
+# ...or individual pieces:
 make data       # build gold + SFT datasets from the cards
 make finetune   # QLoRA fine-tune (GPU; pip install -r requirements-train.txt)
-make eval       # run the 6-config benchmark -> eval/results/results.csv
-make plots      # render charts
+make eval       # 6-config model benchmark -> eval/results/results.csv
+make rag-eval   # retrieval/chunking/faithfulness metrics -> eval/results/rag_metrics.json
+make dashboard  # self-contained eval/results/dashboard.html (offline)
 make test-eval  # offline unit tests for the harness (no GPU/Ollama)
 ```
 

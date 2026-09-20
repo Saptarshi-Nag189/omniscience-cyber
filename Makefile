@@ -1,5 +1,5 @@
 # omniscience-cyber — convenience targets. No sudo, all local/offline.
-.PHONY: setup models ingest serve serve-ollama test test-guard ask data finetune eval plots test-eval bench-all bench-models
+.PHONY: setup models ingest serve serve-ollama test test-guard ask data finetune eval plots test-eval bench-all bench-models rag-eval stats dashboard
 
 setup:            ## full setup: models + deps + ingest
 	bash scripts/gpu_setup.sh
@@ -54,8 +54,18 @@ eval:             ## run the 6-config benchmark (needs Ollama + the 3 models bui
 plots:            ## render result charts from eval/results/results.csv
 	python eval/plots.py
 
+rag-eval:         ## measure RAG quality (retrieval/chunking/faithfulness) -> rag_metrics.json
+	python eval/rag_eval.py --model $(CUSTOM_TAG) --k 4
+
+stats:            ## collect project-specific stats -> project_stats.json
+	python eval/project_stats.py
+
+dashboard:        ## build the offline HTML dashboard -> eval/results/dashboard.html
+	python eval/project_stats.py
+	python eval/dashboard.py
+
 test-eval:        ## offline unit tests for the eval harness (no GPU/Ollama)
-	python -m pytest tests/test_eval.py -q
+	python -m pytest tests/test_eval.py tests/test_rag_metrics.py -q
 
 # ── one-command benchmark pipeline ────────────────────────────────────────────
 # Override any of these to run a different size, e.g. the 0.5B fallback:
@@ -73,16 +83,19 @@ bench-models:     ## pull/build just the baselines the benchmark needs
 	ollama create $(CUSTOM_TAG) -f modelfiles/$(CUSTOM_TAG).Modelfile
 
 bench-all:        ## END-TO-END: datasets -> baselines -> QLoRA -> ft model -> eval -> charts
-	@echo "== [1/6] datasets =="
+	@echo "== [1/7] datasets =="
 	$(MAKE) data
-	@echo "== [2/6] baseline models =="
+	@echo "== [2/7] baseline models =="
 	$(MAKE) bench-models
-	@echo "== [3/6] QLoRA fine-tune (GPU) =="
+	@echo "== [3/7] QLoRA fine-tune (GPU) =="
 	python eval/finetune.py --base $(FT_BASE) --tag $(FT_TAG)
-	@echo "== [4/6] build fine-tuned Ollama model =="
+	@echo "== [4/7] build fine-tuned Ollama model =="
 	ollama create $(FT_TAG) -f modelfiles/$(FT_TAG).Modelfile
-	@echo "== [5/6] run 6-config benchmark =="
+	@echo "== [5/7] run 6-config benchmark =="
 	python eval/run_eval.py --base $(BASE_OLLAMA) --custom $(CUSTOM_TAG) --ft $(FT_TAG) $(if $(JUDGE),--judge $(JUDGE),)
-	@echo "== [6/6] charts =="
+	@echo "== [6/7] RAG quality metrics =="
+	python eval/rag_eval.py --model $(CUSTOM_TAG) --k 4
+	@echo "== [7/7] charts + dashboard =="
 	$(MAKE) plots
-	@echo "== done -> eval/results/ (results.csv, summary.md, *.png); fill in eval/RESULTS.md =="
+	$(MAKE) dashboard
+	@echo "== done -> eval/results/ (results.csv, rag_metrics.json, dashboard.html, *.png); fill in eval/RESULTS.md =="

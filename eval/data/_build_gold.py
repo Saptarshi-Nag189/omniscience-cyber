@@ -17,6 +17,21 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 
+# Maps each gold topic to the security card that should be retrieved for it — the ground-truth
+# "relevant document" label used by the retrieval metrics (Hit@k / MRR / nDCG / recall) in
+# eval/rag_metrics.py.
+TOPIC_CARD = {
+    "idor": "01_idor_bola.md",
+    "sqli": "03_sqli.md",
+    "jwt": "04_jwt_session_auth.md",
+    "ssrf": "15_ssrf.md",
+    "ssti": "18_ssti.md",
+    "xxe": "19_xxe.md",
+    "graphql": "21_graphql.md",
+    "oauth": "24_oauth_oidc.md",
+    "smuggling": "29_http_request_smuggling.md",
+}
+
 # ── Multiple choice ──────────────────────────────────────────────────────────
 MCQ = [
     # IDOR / BOLA
@@ -200,8 +215,9 @@ def _write(name, rows):
 
 def main():
     mcq = [{"id": f"mcq_{i:03d}", "topic": t, "question": q, "options": o, "answer": a,
-            "type": "mcq"} for i, (t, q, o, a) in enumerate(MCQ)]
-    ff = [{"id": f"ff_{i:03d}", "topic": t, "question": q, "reference": ref, "type": "freeform"}
+            "card": TOPIC_CARD.get(t), "type": "mcq"} for i, (t, q, o, a) in enumerate(MCQ)]
+    ff = [{"id": f"ff_{i:03d}", "topic": t, "question": q, "reference": ref,
+           "card": TOPIC_CARD.get(t), "type": "freeform"}
           for i, (t, q, ref) in enumerate(FREEFORM)]
     rf = [{"id": f"rf_{i:03d}", "prompt": p, "type": "refusal"} for i, p in enumerate(REFUSAL)]
     n1 = _write("test_mcq.jsonl", mcq)

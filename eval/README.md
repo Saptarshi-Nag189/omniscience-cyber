@@ -27,6 +27,31 @@ The gold test items (`data/test_*.jsonl`, `data/refusal_probes.jsonl`) are hand-
 34 cards and are **disjoint** from the auto-generated training pairs (`build_dataset.py` drops any
 training item that collides with a gold question), so this is a held-out evaluation.
 
+## RAG quality metrics & dashboard
+
+Beyond the 6-config model benchmark, `eval/rag_eval.py` measures the **retrieval + RAG pipeline**
+itself against the gold cards (each gold item is labelled with its relevant `card`). All metrics
+are deterministic math (no LLM) via `eval/rag_metrics.py`:
+
+| Group | Metric | Definition |
+|---|---|---|
+| Retrieval | Hit@k, MRR, nDCG@k, Precision@k, Recall@k | standard IR ranking metrics vs the gold card |
+| Chunking | context→answer recall | fraction of the gold answer's tokens present in the retrieved chunk |
+| Chunking | cohesion gap | mean intra-chunk − inter-chunk sentence similarity (higher = cleaner chunks) |
+| Answer | faithfulness | fraction of answer sentences grounded in the retrieved context (hallucination ↓) |
+| Answer | answer relevancy | question↔answer cosine |
+
+```bash
+make rag-eval     # -> eval/results/rag_metrics.json   (needs Ollama + an ingested card DB)
+make stats        # -> eval/results/project_stats.json (pure repo scan)
+make dashboard    # -> eval/results/dashboard.html      (self-contained, offline, opens in a browser)
+python eval/dashboard.py --sample   # preview the layout with illustrative numbers
+```
+
+`make bench-all` now also runs `rag-eval` and builds the `dashboard.html`. The dashboard is a single
+offline HTML file (inline CSS + inline SVG charts, no server, no CDN) showing project stats, RAG
+quality, and the model benchmark.
+
 ## Reproduce (NVIDIA, e.g. RTX 4050 6GB)
 
 ```bash

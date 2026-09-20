@@ -1,3 +1,6 @@
+# NOTE: .gitignore does NOT support inline (end-of-line) comments — a '#' after a pattern
+# becomes part of the pattern. Keep every comment on its own line.
+
 # local RAG store & caches
 db/
 *.sqlite3
@@ -5,14 +8,21 @@ __pycache__/
 *.pyc
 .venv/
 venv/
-config.yaml          # user's own config (keep the .example in git)
 *.log
-logs/                 # audit log (engagement records — never commit)
 .DS_Store
 
+# user's own config (keep config.example.yaml in git); may hold an API token
+config.yaml
+
+# audit log — engagement records, never commit
+logs/
+
 # fine-tuning + benchmark artifacts (regenerate locally; the committed RESULTS.md holds the numbers)
-eval/ft_out/          # LoRA adapter, merged model, GGUF exports (large)
-eval/results/*.csv
-eval/results/raw_*.json
-campaigns/            # orchestrator campaign state
+# LoRA adapter, merged model, GGUF exports (large)
+eval/ft_out/
+# generated outputs: results.csv, rag_metrics.json, project_stats.json, dashboard.html, *.png
+eval/results/
+
+# orchestrator runtime state
+campaigns/
 findings.db
