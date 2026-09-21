@@ -321,6 +321,43 @@ On Apple Silicon with unified memory, use the corresponding MLX builds:
 
 ---
 
+## Fine-Tuning & Benchmark (`eval/`)
+
+A self-contained experiment that **quantifies** three ways to specialize one small base model
+(`Qwen2.5-Coder-1.5B`) for authorized pentesting — raw base, custom-modelfile (uncensored via
+system prompt), and **QLoRA fine-tuned** (uncensored + domain knowledge in the weights) — each
+measured **with and without RAG**, for a **3 × 2 = 6** result matrix.
+
+| Metric | Meaning | Direction |
+|---|---|---|
+| MCQ accuracy | 36 held-out multiple-choice security questions | higher |
+| Refusal rate | 12 authorized-pentest asks refused/hedged | lower |
+| Similarity / ROUGE-L | free-form answers vs gold references | higher |
+| Groundedness | optional LLM-judge factual consistency | higher |
+
+The gold test set is hand-authored from the cards and **disjoint** from the auto-generated training
+pairs. Tuned to fit a 6GB-VRAM / 8GB-RAM laptop (4-bit QLoRA, LoRA-only, tiny batch), with a 0.5B
+fallback. Full runbook: [`eval/README.md`](eval/README.md); results writeup: [`eval/RESULTS.md`](eval/RESULTS.md).
+
+It also measures **RAG pipeline quality** with deterministic math — retrieval (Hit@k, MRR, nDCG@k,
+Precision/Recall), chunking (context→answer recall, chunk-cohesion gap), and answer faithfulness
+(hallucination) / relevancy — and renders everything, plus project-specific stats, into a
+self-contained offline **HTML dashboard**.
+
+```bash
+make bench-all  # ONE COMMAND: datasets -> baselines -> QLoRA -> ft model -> eval -> RAG metrics -> dashboard
+
+# ...or individual pieces:
+make data       # build gold + SFT datasets from the cards
+make finetune   # QLoRA fine-tune (GPU; pip install -r requirements-train.txt)
+make eval       # 6-config model benchmark -> eval/results/results.csv
+make rag-eval   # retrieval/chunking/faithfulness metrics -> eval/results/rag_metrics.json
+make dashboard  # self-contained eval/results/dashboard.html (offline)
+make test-eval  # offline unit tests for the harness (no GPU/Ollama)
+```
+
+---
+
 ## HTTP REST API Server
 
 For multi-host setups (e.g. running the AI model on a GPU workstation while Kali runs on a lightweight laptop), start the REST API:
